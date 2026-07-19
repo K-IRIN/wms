@@ -53,7 +53,7 @@ const loading = ref(false)
 const loadCaptcha = async () => {
   const res = await getCaptcha()
   captchaKey.value = res.data.key
-  captchaImg.value = 'data:image/png;base64,' + res.data.img
+  captchaImg.value = res.data.img
   form.code = ''
 }
 
