@@ -52,31 +52,31 @@
 - [ ] 1.3 设计数据库 **ER 图**（实体：用户、角色、菜单、仓库、库区、库位、物料、物料分类、供应商、客户、入库单、出库单、库存、库存流水、盘点单、移库单、操作日志等）
 - [ ] 1.4 编写**数据库表设计文档**：每张表的字段名、类型、含义、约束（约 20 张表，清单见阶段 3）
 - [ ] 1.5 设计 **RESTful 接口清单**：每个接口的 URL、请求方式（GET/POST/PUT/DELETE）、入参、出参（可用 Apifox 管理）
-- [ ] 1.6 确认最终技术选型与版本，写进论文"相关技术介绍"一节：
+- [x] 1.6 确认最终技术选型与版本，写进论文"相关技术介绍"一节：✅ 已定版：Spring Boot 3.3.7 / JDK 21（编译目标）/ MyBatis-Plus 3.5.9 / MySQL 8 / JJWT 0.12.5 / Knife4j 4.5.0 / EasyExcel 4.0.3 / ZXing 3.5.3 ｜ Vue 3 / Vite / Element Plus / Pinia / Vue Router / Axios / ECharts
       Spring Boot 3.x / MyBatis-Plus 3.5.x / MySQL 8 / JWT / Knife4j(Swagger) / EasyExcel / ZXing(二维码) ｜ Vue 3 / Vite / Element Plus / Pinia / Vue Router / Axios / ECharts
 
 ## 阶段 2：项目骨架搭建 + Git/GitHub 版本管控
 
 ### 2A 后端骨架（在现有 `E:\毕业设计\WMS` 基础上改造）
 
-- [ ] 2.1 改造 `pom.xml`：引入 `spring-boot-starter-parent` 父工程及依赖（web、validation、mybatis-plus-boot-starter、mysql-connector-j、lombok、hutool、jjwt、knife4j、easyexcel、zxing）
-- [ ] 2.2 编写启动类 `WmsApplication`（删除示例 `Main.java`），确认项目能启动、访问无报错
-- [ ] 2.3 编写 `application.yml`：配置端口（如 8080）、数据库连接、MyBatis-Plus、JWT 密钥、文件上传大小
-- [ ] 2.4 搭建统一基础设施：统一返回体 `Result<T>`、全局异常处理器、跨域配置（CORS）、Knife4j 接口文档配置
-- [ ] 2.5 规划后端包结构：`controller / service / mapper / entity / dto / vo / config / common / utils / interceptor`
+- [x] 2.1 改造 `pom.xml`：引入 `spring-boot-starter-parent` 父工程及依赖（web、validation、mybatis-plus-boot-starter、mysql-connector-j、lombok、hutool、jjwt、knife4j、easyexcel、zxing）✅ 已完成，额外补充 AOP 依赖与 Lombok 注解处理器配置（兼容 JDK 21 编译）
+- [x] 2.2 编写启动类 `WmsApplication`（删除示例 `Main.java`），确认项目能启动、访问无报错 ✅ 已验证：启动 2.2 秒，`/api/test/ping` 返回 `{"code":200,"data":"pong"}`（注意：数据库接好前启动类暂时 exclude 了 DataSourceAutoConfiguration）
+- [x] 2.3 编写 `application.yml`：配置端口（如 8080）、数据库连接、MyBatis-Plus、JWT 密钥、文件上传大小 ✅ 端口 8080 + 上下文 `/api`；数据源配置已写好但暂时注释（阶段3 取消注释）
+- [x] 2.4 搭建统一基础设施：统一返回体 `Result<T>`、全局异常处理器、跨域配置（CORS）、Knife4j 接口文档配置 ✅ 另有 BizException、MybatisPlusConfig 分页插件
+- [x] 2.5 规划后端包结构：`controller / service / mapper / entity / dto / vo / config / common / utils / interceptor` ✅ 基础包 com.wms
 
 ### 2B 前端骨架（新建 `wms-web` 目录，与后端同级）
 
-- [ ] 2.6 初始化前端：`npm create vite@latest wms-web -- --template vue`，选择 Vue 3
-- [ ] 2.7 安装依赖：`element-plus`、`axios`、`pinia`、`vue-router`、`echarts`、`@element-plus/icons-vue`
-- [ ] 2.8 规划前端目录：`api/（接口封装） router/ store/ views/（按模块分文件夹） layout/ components/ utils/`
-- [ ] 2.9 封装 axios（请求拦截器自动带 Token、响应拦截器统一处理错误码）、配置 vite 代理解决跨域
-- [ ] 2.10 搭建整体布局 Layout：左侧菜单栏 + 顶部用户栏 + 主内容区（路由出口）
+- [x] 2.6 初始化前端：`npm create vite@latest wms-web -- --template vue`，选择 Vue 3 ✅ 已创建 wms-web
+- [x] 2.7 安装依赖：`element-plus`、`axios`、`pinia`、`vue-router`、`echarts`、`@element-plus/icons-vue` ✅ 已安装（npm 已切 npmmirror 镜像提速）
+- [x] 2.8 规划前端目录：`api/（接口封装） router/ store/ views/（按模块分文件夹） layout/ components/ utils/` ✅
+- [x] 2.9 封装 axios（请求拦截器自动带 Token、响应拦截器统一处理错误码）、配置 vite 代理解决跨域 ✅ `utils/request.js` + vite 代理 `/api → 8080`
+- [x] 2.10 搭建整体布局 Layout：左侧菜单栏 + 顶部用户栏 + 主内容区（路由出口）✅ 含 9 大模块菜单占位 + 数据看板占位页，`npm run build` 构建通过
 
 ### 2C Git 版本管控与 GitHub 上传（详细命令见文末教程）
 
-- [ ] 2.11 完善 `.gitignore`：忽略 `target/`、`node_modules/`、`.idea/`、`*.iml`、`dist/`、日志文件
-- [ ] 2.12 首次本地提交：`git add .` → `git commit -m "chore: 项目初始化，搭建前后端骨架"`
+- [x] 2.11 完善 `.gitignore`：忽略 `target/`、`node_modules/`、`.idea/`、`*.iml`、`dist/`、日志文件 ✅
+- [x] 2.12 首次本地提交：`git add .` → `git commit -m "chore: 项目初始化，搭建前后端骨架"` ✅ 提交号 40c0736
 - [ ] 2.13 在 GitHub 网页上新建**私有仓库** `wms`（不要勾选自动生成 README，避免冲突）
 - [ ] 2.14 关联远程仓库并推送：`git remote add origin <仓库地址>` → `git branch -M main` → `git push -u origin main`
 - [ ] 2.15 建立开发分支：`git checkout -b dev`，推送到远程：`git push -u origin dev`
