@@ -221,7 +221,12 @@
         请扫描物料二维码，应扫：<el-tag size="small">{{ currentItem?.materialCode }}</el-tag>
         {{ currentItem?.materialName }} × {{ currentItem?.quantity }}
       </p>
-      <el-input v-model="pickCode" placeholder="扫描或输入物料编号后回车" @keyup.enter="doPick" ref="pickInputRef" />
+      <el-input v-model="pickCode" placeholder="扫描或输入物料编号后回车" @keyup.enter="doPick" ref="pickInputRef">
+        <template #append>
+          <el-button @click="scanVisible = true">📷 摄像头</el-button>
+        </template>
+      </el-input>
+      <ScanDialog v-model="scanVisible" @scan="onCameraScan" />
       <template #footer>
         <el-button @click="pickVisible = false">取消</el-button>
         <el-button type="primary" @click="doPick">核验并拣货</el-button>
@@ -239,6 +244,7 @@ import {
 } from '../../api/outbound'
 import { listAllCustomer, listAllWarehouse, downloadBlob } from '../../api/base'
 import request from '../../utils/request'
+import ScanDialog from '../../components/ScanDialog.vue'
 
 const query = reactive({ pageNum: 1, pageSize: 10, orderNo: '', customerId: null, status: null })
 const dateRange = ref(null)
@@ -383,6 +389,12 @@ const pickVisible = ref(false)
 const currentItem = ref(null)
 const pickCode = ref('')
 const pickInputRef = ref()
+const scanVisible = ref(false)
+
+function onCameraScan(code) {
+  pickCode.value = code
+  doPick()
+}
 
 function openPick(item) {
   currentItem.value = item

@@ -96,8 +96,12 @@
       <div class="scan-row">
         <el-input v-model="scanCode" placeholder="扫描或输入物料编号后回车，自动添加明细" clearable @keyup.enter="onScan">
           <template #prefix>🔍</template>
+          <template #append>
+            <el-button @click="scanVisible = true">📷 摄像头</el-button>
+          </template>
         </el-input>
       </div>
+      <ScanDialog v-model="scanVisible" @scan="onCameraScan" />
 
       <!-- 明细编辑 -->
       <el-table :data="form.items" border size="small">
@@ -252,6 +256,7 @@ import {
 } from '../../api/inbound'
 import { listAllSupplier, listAllWarehouse, downloadBlob } from '../../api/base'
 import request from '../../utils/request'
+import ScanDialog from '../../components/ScanDialog.vue'
 
 const query = reactive({ pageNum: 1, pageSize: 10, orderNo: '', supplierId: null, status: null })
 const dateRange = ref(null)
@@ -309,6 +314,12 @@ async function doExport() {
 const createVisible = ref(false)
 const saving = ref(false)
 const scanCode = ref('')
+const scanVisible = ref(false)
+
+function onCameraScan(code) {
+  scanCode.value = code
+  onScan()
+}
 const form = reactive({ id: null, supplierId: null, warehouseId: null, orderDate: '', remark: '', items: [] })
 
 const totalAmount = computed(() =>
