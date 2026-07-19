@@ -47,3 +47,5 @@ wms-web/dist-ssr/
 ### 日志与临时文件 ###
 *.log
 logs/
+### 上传文件（头像等） ###
+uploads/

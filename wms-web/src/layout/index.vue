@@ -1,6 +1,6 @@
 <template>
   <el-container class="layout-container">
-    <!-- 左侧菜单 -->
+    <!-- 左侧菜单：按登录用户的角色菜单动态渲染 -->
     <el-aside width="220px" class="aside">
       <div class="logo">📦 WMS 智能仓储</div>
       <el-menu
@@ -10,33 +10,24 @@
         text-color="#a6adb4"
         active-text-color="#ffffff"
       >
-        <el-menu-item index="/dashboard">
-          <el-icon><DataAnalysis /></el-icon><span>数据看板</span>
-        </el-menu-item>
-        <el-menu-item index="/base">
-          <el-icon><Files /></el-icon><span>基础资料</span>
-        </el-menu-item>
-        <el-menu-item index="/inbound">
-          <el-icon><Download /></el-icon><span>采购入库</span>
-        </el-menu-item>
-        <el-menu-item index="/outbound">
-          <el-icon><Upload /></el-icon><span>销售出库</span>
-        </el-menu-item>
-        <el-menu-item index="/inventory">
-          <el-icon><Box /></el-icon><span>库存管理</span>
-        </el-menu-item>
-        <el-menu-item index="/qrcode">
-          <el-icon><Grid /></el-icon><span>条码管理</span>
-        </el-menu-item>
-        <el-menu-item index="/check">
-          <el-icon><Checked /></el-icon><span>库存盘点</span>
-        </el-menu-item>
-        <el-menu-item index="/log">
-          <el-icon><Document /></el-icon><span>单据日志</span>
-        </el-menu-item>
-        <el-menu-item index="/system">
-          <el-icon><Setting /></el-icon><span>系统管理</span>
-        </el-menu-item>
+        <template v-for="menu in store.menus" :key="menu.id">
+          <!-- 目录（有子菜单） -->
+          <el-sub-menu v-if="menu.menuType === 'M'" :index="menu.path || String(menu.id)">
+            <template #title>
+              <el-icon><component :is="menu.icon || 'Folder'" /></el-icon>
+              <span>{{ menu.menuName }}</span>
+            </template>
+            <el-menu-item v-for="child in menu.children" :key="child.id" :index="child.path">
+              <el-icon><component :is="child.icon || 'Document'" /></el-icon>
+              <span>{{ child.menuName }}</span>
+            </el-menu-item>
+          </el-sub-menu>
+          <!-- 普通菜单 -->
+          <el-menu-item v-else :index="menu.path">
+            <el-icon><component :is="menu.icon || 'Document'" /></el-icon>
+            <span>{{ menu.menuName }}</span>
+          </el-menu-item>
+        </template>
       </el-menu>
     </el-aside>
 
@@ -44,14 +35,16 @@
     <el-container>
       <el-header class="header">
         <span class="page-title">{{ $route.meta.title || '首页' }}</span>
-        <el-dropdown>
+        <el-dropdown @command="onCommand">
           <span class="user-info">
-            管理员 <el-icon><ArrowDown /></el-icon>
+            <el-avatar :size="28" :src="avatarUrl">{{ avatarText }}</el-avatar>
+            <span class="nickname">{{ store.userInfo?.nickname || store.userInfo?.username }}</span>
+            <el-icon><ArrowDown /></el-icon>
           </span>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item>个人中心</el-dropdown-item>
-              <el-dropdown-item divided>退出登录</el-dropdown-item>
+              <el-dropdown-item command="profile">个人中心</el-dropdown-item>
+              <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -62,6 +55,32 @@
     </el-container>
   </el-container>
 </template>
+
+<script setup>
+import { computed } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessageBox } from 'element-plus'
+import { useUserStore } from '../store/user'
+
+const store = useUserStore()
+const router = useRouter()
+
+// 头像走 /api 前缀，开发环境由 vite 代理到后端
+const avatarUrl = computed(() => {
+  const a = store.userInfo?.avatar
+  return a ? '/api' + a : ''
+})
+const avatarText = computed(() => (store.userInfo?.nickname || store.userInfo?.username || 'U').charAt(0))
+
+const onCommand = async (cmd) => {
+  if (cmd === 'profile') {
+    router.push('/profile')
+  } else if (cmd === 'logout') {
+    await ElMessageBox.confirm('确定要退出登录吗？', '提示', { type: 'warning' })
+    store.logout()
+  }
+}
+</script>
 
 <style scoped>
 .layout-container {
@@ -96,7 +115,10 @@
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
+}
+.nickname {
+  font-size: 14px;
 }
 .main {
   background: #f0f2f5;
