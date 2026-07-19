@@ -115,6 +115,15 @@ public class BasMaterialController {
 
     // ==================== 物料 ====================
 
+    @Operation(summary = "启用物料下拉列表")
+    @GetMapping("/all")
+    public Result<List<WmsMaterial>> all() {
+        return Result.ok(materialService.lambdaQuery()
+                .eq(WmsMaterial::getStatus, 1)
+                .orderByAsc(WmsMaterial::getId)
+                .list());
+    }
+
     @Operation(summary = "物料分页查询")
     @GetMapping("/page")
     public Result<Page<WmsMaterial>> page(@RequestParam(defaultValue = "1") long pageNum,
