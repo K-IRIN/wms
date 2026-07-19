@@ -77,9 +77,9 @@
 
 - [x] 2.11 完善 `.gitignore`：忽略 `target/`、`node_modules/`、`.idea/`、`*.iml`、`dist/`、日志文件 ✅
 - [x] 2.12 首次本地提交：`git add .` → `git commit -m "chore: 项目初始化，搭建前后端骨架"` ✅ 提交号 40c0736
-- [ ] 2.13 在 GitHub 网页上新建**私有仓库** `wms`（不要勾选自动生成 README，避免冲突）
-- [ ] 2.14 关联远程仓库并推送：`git remote add origin <仓库地址>` → `git branch -M main` → `git push -u origin main`
-- [ ] 2.15 建立开发分支：`git checkout -b dev`，推送到远程：`git push -u origin dev`
+- [x] 2.13 在 GitHub 网页上新建**私有仓库** `wms`（不要勾选自动生成 README，避免冲突）✅ 已建：git@github.com:K-IRIN/wms.git
+- [x] 2.14 关联远程仓库并推送：`git remote add origin <仓库地址>` → `git branch -M main` → `git push -u origin main` ✅ 已推送 main（注：22 端口被网络封禁，已在 ~/.ssh/config 配置走 443 端口的 ssh.github.com）
+- [x] 2.15 建立开发分支：`git checkout -b dev`，推送到远程：`git push -u origin dev` ✅ dev 分支已推送，当前工作分支为 dev
       **之后所有功能都在 dev 或 feature 分支上开发，完成并测试后合并回 main**
 - [ ] 2.16 养成习惯：每完成一个小功能就 `commit` 一次；每天收工前 `push` 一次
 
