@@ -6,15 +6,12 @@ server:
 spring:
   application:
     name: wms-server
-  # ============================================================
-  # TODO 阶段3：建好 wms 数据库后，取消下面 4 行注释并填你的 MySQL 密码，
-  #      同时删掉 WmsApplication 上的 exclude = DataSourceAutoConfiguration.class
-  # ============================================================
-  # datasource:
-  #   driver-class-name: com.mysql.cj.jdbc.Driver
-  #   url: jdbc:mysql://localhost:3306/wms?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-  #   username: root
-  #   password: 你的MySQL密码
+  # 数据源：本地 MySQL 8.0，wms 数据库（阶段3 已建库）
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/wms?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: 123456
   servlet:
     multipart:
       max-file-size: 10MB

@@ -50,7 +50,7 @@
 - [ ] 1.1 按需求文档整理 9 大模块功能清单，画出**系统功能结构图**（ProcessOn / draw.io 在线画，免费）
 - [ ] 1.2 确定 4 种角色（管理员、仓管员、普通操作员、访客），画出**用例图**
 - [ ] 1.3 设计数据库 **ER 图**（实体：用户、角色、菜单、仓库、库区、库位、物料、物料分类、供应商、客户、入库单、出库单、库存、库存流水、盘点单、移库单、操作日志等）
-- [ ] 1.4 编写**数据库表设计文档**：每张表的字段名、类型、含义、约束（约 20 张表，清单见阶段 3）
+- [x] 1.4 编写**数据库表设计文档**：每张表的字段名、类型、含义、约束（约 20 张表，清单见阶段 3）✅ 已生成 `docs/数据库设计.md`（22 张表，由 tools/codegen.py 自动生成，论文可直接用）
 - [ ] 1.5 设计 **RESTful 接口清单**：每个接口的 URL、请求方式（GET/POST/PUT/DELETE）、入参、出参（可用 Apifox 管理）
 - [x] 1.6 确认最终技术选型与版本，写进论文"相关技术介绍"一节：✅ 已定版：Spring Boot 3.3.7 / JDK 21（编译目标）/ MyBatis-Plus 3.5.9 / MySQL 8 / JJWT 0.12.5 / Knife4j 4.5.0 / EasyExcel 4.0.3 / ZXing 3.5.3 ｜ Vue 3 / Vite / Element Plus / Pinia / Vue Router / Axios / ECharts
       Spring Boot 3.x / MyBatis-Plus 3.5.x / MySQL 8 / JWT / Knife4j(Swagger) / EasyExcel / ZXing(二维码) ｜ Vue 3 / Vite / Element Plus / Pinia / Vue Router / Axios / ECharts
@@ -85,15 +85,15 @@
 
 ## 阶段 3：数据库建表与代码生成
 
-- [ ] 3.1 创建数据库 `wms`（字符集 utf8mb4）
-- [ ] 3.2 编写并执行建表 SQL（建议的表清单，可按设计调整）：
+- [x] 3.1 创建数据库 `wms`（字符集 utf8mb4）✅
+- [x] 3.2 编写并执行建表 SQL（建议的表清单，可按设计调整）：✅ 实际建成 22 张表，脚本在 `sql/wms.sql`
   - 权限相关：`sys_user`、`sys_role`、`sys_menu`、`sys_user_role`、`sys_role_menu`
   - 基础资料：`wms_warehouse`（仓库）、`wms_area`（库区）、`wms_location`（库位）、`wms_material_category`（物料分类）、`wms_material`（物料SKU）、`wms_supplier`（供应商）、`wms_customer`（客户）
   - 业务单据：`wms_inbound_order` + `wms_inbound_item`（入库单及明细）、`wms_outbound_order` + `wms_outbound_item`（出库单及明细）、`wms_check_order` + `wms_check_item`（盘点单及明细）、`wms_move_order`（移库单）
   - 库存与日志：`wms_inventory`（库存）、`wms_inventory_log`（库存流水）、`sys_operation_log`（操作日志）
-- [ ] 3.3 插入初始化数据：admin 账号、4 个角色、菜单数据、1 个示例仓库/库区/库位、若干测试物料
-- [ ] 3.4 用 MyBatis-Plus 代码生成器（或手写）生成所有表的 `entity / mapper / service / serviceImpl`
-- [ ] 3.5 提交代码：`git commit -m "feat: 数据库建表与实体类生成"` 并 push
+- [x] 3.3 插入初始化数据：admin 账号、4 个角色、菜单数据、1 个示例仓库/库区/库位、若干测试物料 ✅ admin/123456（BCrypt 加密）、17 个菜单、示例仓库库区库位、4 个测试物料、示例供应商客户
+- [x] 3.4 用 MyBatis-Plus 代码生成器（或手写）生成所有表的 `entity / mapper / service / serviceImpl` ✅ 自研生成器 `tools/codegen.py`，22 张表 × 4 类文件共 88 个 Java 文件
+- [x] 3.5 提交代码：`git commit -m "feat: 数据库建表与实体类生成"` 并 push ✅ 数据源已接通（root/123456），启动验证通过
 
 ## 阶段 4：模块一 —— 用户登录与权限管理
 
