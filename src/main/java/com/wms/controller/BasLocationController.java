@@ -84,6 +84,12 @@ public class BasLocationController {
         return Result.ok(tree);
     }
 
+    @Operation(summary = "库位全量列表（AGV 仓库地图用，含 pos_x/pos_y 坐标）")
+    @GetMapping("/all")
+    public Result<List<WmsLocation>> all() {
+        return Result.ok(locationService.lambdaQuery().orderByAsc(WmsLocation::getId).list());
+    }
+
     // ==================== 库区 ====================
 
     @Operation(summary = "新增库区")

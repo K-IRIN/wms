@@ -7,11 +7,13 @@ import com.wms.annotation.OperationLog;
 import com.wms.common.BizException;
 import com.wms.common.Result;
 import com.wms.entity.WmsAgvDevice;
+import com.wms.entity.WmsAgvLog;
 import com.wms.entity.WmsAgvTask;
 import com.wms.entity.WmsLocation;
 import com.wms.entity.WmsMaterial;
 import com.wms.service.AgvEngineService;
 import com.wms.service.WmsAgvDeviceService;
+import com.wms.service.WmsAgvLogService;
 import com.wms.service.WmsAgvTaskService;
 import com.wms.service.WmsLocationService;
 import com.wms.service.WmsMaterialService;
@@ -27,6 +29,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Duration;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -42,6 +48,7 @@ public class AgvTaskController {
 
     private final WmsAgvTaskService taskService;
     private final WmsAgvDeviceService deviceService;
+    private final WmsAgvLogService logService;
     private final WmsLocationService locationService;
     private final WmsMaterialService materialService;
     private final AgvEngineService engine;
@@ -90,6 +97,62 @@ public class AgvTaskController {
                 dto.getFromLocationId(), dto.getToLocationId(),
                 dto.getPriority() != null && dto.getPriority() == 1 ? 1 : 0);
         return Result.ok(task.getTaskNo());
+    }
+
+    @Operation(summary = "AGV 任务统计（数据看板图表用，v2.0 E3）")
+    @GetMapping("/stat")
+    public Result<Map<String, Object>> stat() {
+        List<WmsAgvTask> all = taskService.list();
+
+        // 近14天每日任务完成量（按完成时间归天，无数据补 0）
+        LocalDate today = LocalDate.now();
+        Map<String, Long> doneMap = all.stream()
+                .filter(t -> t.getStatus() == AgvEngineService.TASK_DONE && t.getFinishTime() != null)
+                .collect(Collectors.groupingBy(t -> t.getFinishTime().toLocalDate().toString(), Collectors.counting()));
+        List<String> labels = new ArrayList<>();
+        List<Long> donePerDay = new ArrayList<>();
+        for (int i = 13; i >= 0; i--) {
+            String day = today.minusDays(i).toString();
+            labels.add(day.substring(5)); // 只显示 MM-dd，避免横轴过密
+            donePerDay.add(doneMap.getOrDefault(day, 0L));
+        }
+
+        // 任务类型占比
+        List<Map<String, Object>> typeRatio = all.stream()
+                .filter(t -> StrUtil.isNotBlank(t.getTaskType()))
+                .collect(Collectors.groupingBy(WmsAgvTask::getTaskType, Collectors.counting()))
+                .entrySet().stream()
+                .map(e -> {
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("name", e.getKey());
+                    item.put("value", e.getValue());
+                    return item;
+                })
+                .collect(Collectors.toList());
+
+        // 故障/告警次数（来自 AGV 运行日志表）
+        long faultCount = logService.lambdaQuery().eq(WmsAgvLog::getLogType, "故障").count();
+        long alertCount = logService.lambdaQuery().eq(WmsAgvLog::getLogType, "告警").count();
+
+        // 平均任务耗时（秒）：已完成任务 开始执行→完成
+        double avgSec = all.stream()
+                .filter(t -> t.getStatus() == AgvEngineService.TASK_DONE
+                        && t.getStartTime() != null && t.getFinishTime() != null)
+                .mapToLong(t -> Duration.between(t.getStartTime(), t.getFinishTime()).getSeconds())
+                .average().orElse(0);
+
+        long totalDone = all.stream().filter(t -> t.getStatus() == AgvEngineService.TASK_DONE).count();
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("labels", labels);
+        result.put("donePerDay", donePerDay);
+        result.put("typeRatio", typeRatio);
+        result.put("faultCount", faultCount);
+        result.put("alertCount", alertCount);
+        result.put("avgDurationSec", Math.round(avgSec * 10) / 10.0);
+        result.put("totalDone", totalDone);
+        result.put("totalTask", all.size());
+        return Result.ok(result);
     }
 
     @Operation(summary = "取消任务")

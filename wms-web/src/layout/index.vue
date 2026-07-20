@@ -75,13 +75,20 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { useUserStore } from '../store/user'
+import { useAgvStore } from '../store/agv'
 
 const store = useUserStore()
+const agvStore = useAgvStore()
 const router = useRouter()
+
+// 登录进入布局后建立 AGV 实时推送连接（全局仅一次，地图页/监控页共用）
+onMounted(() => {
+  agvStore.connect()
+})
 
 // 头像走 /api 前缀，开发环境由 vite 代理到后端
 const avatarUrl = computed(() => {
@@ -95,6 +102,7 @@ const onCommand = async (cmd) => {
     router.push('/profile')
   } else if (cmd === 'logout') {
     await ElMessageBox.confirm('确定要退出登录吗？', '提示', { type: 'warning' })
+    agvStore.disconnect()
     store.logout()
   }
 }

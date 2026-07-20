@@ -10,6 +10,7 @@ export const updateWarehouseStatus = (id, status) => request.put(`/base/warehous
 
 // ==================== 库区库位 ====================
 export const getLocationTree = () => request.get('/base/location/tree')
+export const listAllLocation = () => request.get('/base/location/all')
 export const addArea = (data) => request.post('/base/location/area/add', data)
 export const updateArea = (data) => request.put('/base/location/area/update', data)
 export const deleteArea = (id) => request.delete(`/base/location/area/${id}`)

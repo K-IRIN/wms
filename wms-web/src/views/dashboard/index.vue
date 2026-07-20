@@ -102,6 +102,45 @@
       </el-col>
     </el-row>
 
+    <!-- AGV 搬运统计（v2.0 E3.4） -->
+    <el-row :gutter="12" style="margin-top: 12px">
+      <el-col :span="10">
+        <el-card shadow="never">
+          <div class="chart-header"><span class="chart-title">AGV 任务完成量（近14天）</span></div>
+          <div ref="agvDoneChartRef" class="chart" style="height: 260px"></div>
+        </el-card>
+      </el-col>
+      <el-col :span="7">
+        <el-card shadow="never">
+          <div class="chart-header"><span class="chart-title">AGV 任务类型占比</span></div>
+          <div ref="agvTypeChartRef" class="chart" style="height: 260px"></div>
+        </el-card>
+      </el-col>
+      <el-col :span="7">
+        <el-card shadow="never">
+          <div class="chart-header"><span class="chart-title">AGV 运行质量</span></div>
+          <div class="agv-quality">
+            <div class="q-item">
+              <div class="q-num" style="color:#f56c6c">{{ agvStat.faultCount ?? '-' }}</div>
+              <div class="q-title">故障次数</div>
+            </div>
+            <div class="q-item">
+              <div class="q-num" style="color:#e6a23c">{{ agvStat.alertCount ?? '-' }}</div>
+              <div class="q-title">告警次数</div>
+            </div>
+            <div class="q-item">
+              <div class="q-num" style="color:#2e6bff">{{ agvStat.avgDurationSec ?? '-' }}<span class="q-unit">秒</span></div>
+              <div class="q-title">平均任务耗时</div>
+            </div>
+            <div class="q-item">
+              <div class="q-num" style="color:#22b07d">{{ agvStat.totalDone ?? '-' }}</div>
+              <div class="q-title">累计完成任务</div>
+            </div>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+
     <!-- 员工绩效 -->
     <el-row :gutter="12" style="margin-top: 12px">
       <el-col :span="24">
@@ -158,6 +197,7 @@ import {
   getSummary, getInoutTrend, getCategoryRatio, getCheckAnalysis,
   getTurnover, getStaffPerformance, getWarningReport, exportDashboard
 } from '../../api/dashboard.js'
+import { getAgvTaskStat } from '../../api/agv.js'
 import { downloadBlob } from '../../api/base.js'
 
 const cards = ref([
@@ -183,9 +223,15 @@ const warnDialogType = ref('shortage')
 const trendChartRef = ref(null)
 const pieChartRef = ref(null)
 const accuracyChartRef = ref(null)
+const agvDoneChartRef = ref(null)
+const agvTypeChartRef = ref(null)
 let trendChart = null
 let pieChart = null
 let accuracyChart = null
+let agvDoneChart = null
+let agvTypeChart = null
+// AGV 运行质量统计（E3.4）
+const agvStat = ref({})
 
 const warnCards = computed(() => [
   { title: '库存短缺', count: warning.value.shortageCount, color: '#f56c6c', type: 'shortage' },
@@ -282,6 +328,31 @@ async function loadWarning() {
   warning.value = res.data
 }
 
+// AGV 搬运统计：近14天完成量柱状图 + 任务类型占比饼图 + 运行质量指标
+async function loadAgvStat() {
+  const res = await getAgvTaskStat()
+  agvStat.value = res.data
+  agvDoneChart?.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 40, right: 16, top: 30, bottom: 28 },
+    xAxis: { type: 'category', data: res.data.labels },
+    yAxis: { type: 'value', name: '任务数', minInterval: 1 },
+    series: [{
+      name: '完成任务', type: 'bar', data: res.data.donePerDay, barMaxWidth: 22,
+      itemStyle: { color: '#2e6bff', borderRadius: [4, 4, 0, 0] }
+    }]
+  }, true)
+  agvTypeChart?.setOption({
+    color: ['#2e6bff', '#22b07d', '#e6a23c', '#7c5cff', '#ff7a45'],
+    tooltip: { trigger: 'item', formatter: '{b}: {c} 个（{d}%）' },
+    legend: { bottom: 0 },
+    series: [{
+      type: 'pie', radius: ['38%', '64%'], center: ['50%', '44%'],
+      data: res.data.typeRatio, label: { formatter: '{b}\n{d}%' }
+    }]
+  }, true)
+}
+
 async function doExport() {
   exporting.value = true
   try {
@@ -297,12 +368,16 @@ function handleResize() {
   trendChart?.resize()
   pieChart?.resize()
   accuracyChart?.resize()
+  agvDoneChart?.resize()
+  agvTypeChart?.resize()
 }
 
 onMounted(() => {
   trendChart = echarts.init(trendChartRef.value)
   pieChart = echarts.init(pieChartRef.value)
   accuracyChart = echarts.init(accuracyChartRef.value)
+  agvDoneChart = echarts.init(agvDoneChartRef.value)
+  agvTypeChart = echarts.init(agvTypeChartRef.value)
   loadSummary()
   loadTrend()
   loadRatio()
@@ -310,6 +385,7 @@ onMounted(() => {
   loadTurnover()
   loadStaff()
   loadWarning()
+  loadAgvStat()
   window.addEventListener('resize', handleResize)
 })
 
@@ -318,6 +394,8 @@ onBeforeUnmount(() => {
   trendChart?.dispose()
   pieChart?.dispose()
   accuracyChart?.dispose()
+  agvDoneChart?.dispose()
+  agvTypeChart?.dispose()
 })
 </script>
 
@@ -426,5 +504,38 @@ onBeforeUnmount(() => {
   color: #c0c4cc;
   font-size: 12px;
   padding-bottom: 8px;
+}
+
+/* AGV 运行质量指标块 */
+.agv-quality {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 14px 6px;
+}
+
+.q-item {
+  text-align: center;
+  background: #f6f9ff;
+  border-radius: 10px;
+  padding: 16px 0;
+}
+
+.q-num {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.q-unit {
+  font-size: 12px;
+  font-weight: 500;
+  margin-left: 2px;
+}
+
+.q-title {
+  font-size: 12.5px;
+  color: var(--wms-text-sub);
+  margin-top: 6px;
 }
 </style>

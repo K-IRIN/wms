@@ -571,3 +571,16 @@ INSERT INTO wms_agv_device (agv_code, agv_name, max_load, speed, battery, status
 -- 【E2】AGV 虚拟月台库位：入库搬运的起点 / 出库搬运的终点（位于收货区 A01，坐标 (0,0)）
 INSERT INTO wms_location (area_id, location_code, capacity, goods_type, status, remark, pos_x, pos_y) VALUES
 (1, 'A01-DOCK', NULL, 'AGV虚拟月台', 0, 'AGV 装卸货月台（虚拟库位，请勿上架真实物料）', 0, 0);
+
+-- ============================================================
+-- 【二期 E3】AGV 仓库地图可视化 + 设备监控大屏
+-- 在 E1 的"设备监控"目录（id=19）下新增两个页面菜单
+-- ============================================================
+INSERT INTO sys_menu (id, parent_id, menu_name, menu_type, path, icon, sort) VALUES
+(21, 19, '仓库地图', 'C', '/agv/map',     'MapLocation', 2),
+(22, 19, '运行监控', 'C', '/agv/monitor', 'DataLine',    3);
+
+-- 菜单授权：管理员 + 设备运维员
+INSERT INTO sys_role_menu (role_id, menu_id) VALUES
+(1, 21), (1, 22),
+(5, 21), (5, 22);
