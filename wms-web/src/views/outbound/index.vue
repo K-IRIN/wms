@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="page">
     <el-card shadow="never">
       <!-- 搜索区 -->
       <el-form :inline="true" @submit.prevent>

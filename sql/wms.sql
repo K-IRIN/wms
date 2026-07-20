@@ -411,24 +411,24 @@ INSERT INTO sys_user_role (user_id, role_id) VALUES (1, 1);
 
 -- 菜单（9 大模块 + 系统管理）
 INSERT INTO sys_menu (id, parent_id, menu_name, menu_type, path, icon, perms, sort) VALUES
-(1,  0,  '数据看板',   'C', '/dashboard',       'DataAnalysis', 'dashboard:view',      1),
-(2,  0,  '基础资料',   'M', '/base',            'Files',        NULL,                 2),
-(3,  2,  '仓库管理',   'C', '/base/warehouse',  NULL,           'wms:warehouse:list', 1),
-(18, 2,  '库区库位',   'C', '/base/location',   NULL,           'wms:location:list',  2),
-(4,  2,  '物料管理',   'C', '/base/material',   NULL,           'wms:material:list',  3),
-(5,  2,  '供应商管理', 'C', '/base/supplier',   NULL,           'wms:supplier:list',  4),
-(6,  2,  '客户管理',   'C', '/base/customer',   NULL,           'wms:customer:list',  5),
-(7,  0,  '采购入库',   'C', '/inbound',         'Download',     'wms:inbound:list',   3),
-(8,  0,  '销售出库',   'C', '/outbound',        'Upload',       'wms:outbound:list',  4),
-(9,  0,  '库存管理',   'C', '/inventory',       'Box',          'wms:inventory:list', 5),
-(10, 0,  '条码管理',   'C', '/qrcode',          'Grid',         'wms:qrcode:view',    6),
-(11, 0,  '库存盘点',   'C', '/check',           'Checked',      'wms:check:list',     7),
-(12, 0,  '单据中心',   'C', '/doc',             'Document',     'wms:doc:list',       8),
-(13, 0,  '操作日志',   'C', '/log',             'Tickets',      'sys:log:list',       9),
-(14, 0,  '系统管理',   'M', '/system',          'Setting',      NULL,                 10),
-(15, 14, '用户管理',   'C', '/system/user',     NULL,           'sys:user:list',      1),
-(16, 14, '角色管理',   'C', '/system/role',     NULL,           'sys:role:list',      2),
-(17, 14, '菜单管理',   'C', '/system/menu',     NULL,           'sys:menu:list',      3);
+(1,  0,  '数据看板',   'C', '/dashboard',       'Odometer',      'dashboard:view',      1),
+(2,  0,  '基础资料',   'M', '/base',            'FolderOpened',  NULL,                 2),
+(3,  2,  '仓库管理',   'C', '/base/warehouse',  'OfficeBuilding','wms:warehouse:list', 1),
+(18, 2,  '库区库位',   'C', '/base/location',   'MapLocation',   'wms:location:list',  2),
+(4,  2,  '物料管理',   'C', '/base/material',   'Goods',         'wms:material:list',  3),
+(5,  2,  '供应商管理', 'C', '/base/supplier',   'Van',           'wms:supplier:list',  4),
+(6,  2,  '客户管理',   'C', '/base/customer',   'User',          'wms:customer:list',  5),
+(7,  0,  '采购入库',   'C', '/inbound',         'Download',      'wms:inbound:list',   3),
+(8,  0,  '销售出库',   'C', '/outbound',        'Upload',        'wms:outbound:list',  4),
+(9,  0,  '库存管理',   'C', '/inventory',       'Box',           'wms:inventory:list', 5),
+(10, 0,  '条码管理',   'C', '/qrcode',          'FullScreen',    'wms:qrcode:view',    6),
+(11, 0,  '库存盘点',   'C', '/check',           'DocumentChecked','wms:check:list',    7),
+(12, 0,  '单据中心',   'C', '/doc',             'Tickets',       'wms:doc:list',       8),
+(13, 0,  '操作日志',   'C', '/log',             'Memo',          'sys:log:list',       9),
+(14, 0,  '系统管理',   'M', '/system',          'Setting',       NULL,                 10),
+(15, 14, '用户管理',   'C', '/system/user',     'UserFilled',    'sys:user:list',      1),
+(16, 14, '角色管理',   'C', '/system/role',     'Key',           'sys:role:list',      2),
+(17, 14, '菜单管理',   'C', '/system/menu',     'Operation',     'sys:menu:list',      3);
 
 -- 管理员角色拥有全部菜单
 INSERT INTO sys_role_menu (role_id, menu_id) SELECT 1, id FROM sys_menu;

@@ -52,16 +52,13 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { pageLog } from '../../api/log.js'
+import { formatTime } from '../../utils/format.js'
 
 const loading = ref(false)
 const rows = ref([])
 const total = ref(0)
 const timeRange = ref(null)
 const query = ref({ pageNum: 1, pageSize: 20, username: '', operation: '' })
-
-function formatTime(t) {
-  return t ? String(t).replace('T', ' ').slice(0, 19) : '-'
-}
 
 async function load(pageNum) {
   if (pageNum) query.value.pageNum = pageNum

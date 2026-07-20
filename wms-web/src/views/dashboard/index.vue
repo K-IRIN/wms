@@ -4,8 +4,13 @@
     <el-row :gutter="12">
       <el-col :span="4" v-for="card in cards" :key="card.title">
         <el-card shadow="hover" class="stat-card">
-          <div class="stat-title">{{ card.title }}</div>
-          <div class="stat-num" :style="{ color: card.color }">{{ card.value }}</div>
+          <div class="stat-icon" :style="{ background: card.bg, color: card.color }">
+            <el-icon :size="20"><component :is="card.icon" /></el-icon>
+          </div>
+          <div class="stat-info">
+            <div class="stat-title">{{ card.title }}</div>
+            <div class="stat-num" :style="{ color: card.color }">{{ card.value }}</div>
+          </div>
         </el-card>
       </el-col>
     </el-row>
@@ -156,12 +161,12 @@ import {
 import { downloadBlob } from '../../api/base.js'
 
 const cards = ref([
-  { title: '物料总数', value: '-', color: '#409eff' },
-  { title: '库存总量', value: '-', color: '#67c23a' },
-  { title: '今日入库单', value: '-', color: '#e6a23c' },
-  { title: '今日出库单', value: '-', color: '#f56c6c' },
-  { title: '待审核单据', value: '-', color: '#909399' },
-  { title: '预警总数', value: '-', color: '#b88230' }
+  { title: '物料总数', value: '-', color: '#2e6bff', bg: 'rgba(46,107,255,.12)', icon: 'Goods' },
+  { title: '库存总量', value: '-', color: '#22b07d', bg: 'rgba(34,176,125,.12)', icon: 'Box' },
+  { title: '今日入库单', value: '-', color: '#e6a23c', bg: 'rgba(230,162,60,.13)', icon: 'Download' },
+  { title: '今日出库单', value: '-', color: '#f56c6c', bg: 'rgba(245,108,108,.12)', icon: 'Upload' },
+  { title: '待审核单据', value: '-', color: '#7c5cff', bg: 'rgba(124,92,255,.12)', icon: 'DocumentChecked' },
+  { title: '预警总数', value: '-', color: '#b88230', bg: 'rgba(184,130,48,.14)', icon: 'Warning' }
 ])
 const trendPeriod = ref('day')
 const ratioType = ref('stockRatio')
@@ -217,8 +222,8 @@ async function loadTrend() {
     xAxis: { type: 'category', data: d.labels, axisLabel: { rotate: d.labels.length > 15 ? 45 : 0 } },
     yAxis: { type: 'value', name: '数量' },
     series: [
-      { name: '入库量', type: 'line', smooth: true, data: d.inbound, areaStyle: { opacity: 0.15 }, itemStyle: { color: '#67c23a' } },
-      { name: '出库量', type: 'line', smooth: true, data: d.outbound, areaStyle: { opacity: 0.15 }, itemStyle: { color: '#f56c6c' } }
+      { name: '入库量', type: 'line', smooth: true, data: d.inbound, areaStyle: { opacity: 0.12 }, itemStyle: { color: '#2e6bff' }, lineStyle: { width: 2.5 } },
+      { name: '出库量', type: 'line', smooth: true, data: d.outbound, areaStyle: { opacity: 0.12 }, itemStyle: { color: '#ff7a45' }, lineStyle: { width: 2.5 } }
     ]
   }, true)
 }
@@ -232,6 +237,7 @@ async function loadRatio() {
 function renderPie() {
   const data = ratioData.value[ratioType.value] || []
   pieChart?.setOption({
+    color: ['#2e6bff', '#22b07d', '#e6a23c', '#7c5cff', '#ff7a45', '#40beff', '#f56c6c'],
     tooltip: { trigger: 'item', formatter: '{b}: {c} 件（{d}%）' },
     legend: { bottom: 0, type: 'scroll' },
     series: [{
@@ -321,18 +327,32 @@ onBeforeUnmount(() => {
 }
 
 .stat-card :deep(.el-card__body) {
-  padding: 14px 16px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.stat-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .stat-title {
-  font-size: 13px;
-  color: #909399;
+  font-size: 12.5px;
+  color: var(--wms-text-sub);
 }
 
 .stat-num {
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 700;
-  margin-top: 6px;
+  margin-top: 4px;
+  line-height: 1.1;
 }
 
 .chart-header {

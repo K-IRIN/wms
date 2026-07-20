@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="page">
     <el-card shadow="never">
       <el-tabs v-model="tab">
         <!-- ========== Tab1 库存查询 ========== -->
@@ -77,7 +77,9 @@
             </el-form-item>
           </el-form>
           <el-table :data="logRows" v-loading="logLoading" border size="small">
-            <el-table-column prop="createTime" label="时间" width="160" />
+            <el-table-column prop="createTime" label="时间" width="160">
+              <template #default="{ row }">{{ formatTime(row.createTime) }}</template>
+            </el-table-column>
             <el-table-column prop="changeType" label="类型" width="75" align="center">
               <template #default="{ row }">
                 <el-tag size="small" :type="{ 入库: 'success', 出库: 'danger' }[row.changeType] || 'info'">
@@ -126,7 +128,9 @@
               </template>
             </el-table-column>
             <el-table-column prop="operator" label="操作人" width="100" />
-            <el-table-column prop="createTime" label="时间" width="160" />
+            <el-table-column prop="createTime" label="时间" width="160">
+              <template #default="{ row }">{{ formatTime(row.createTime) }}</template>
+            </el-table-column>
             <el-table-column prop="remark" label="备注" min-width="110" show-overflow-tooltip />
           </el-table>
           <el-pagination style="margin-top: 12px; justify-content: flex-end" background
@@ -237,6 +241,7 @@ import {
   moveInventory, pageMoveOrder, getWarnings, freezeInventory, unfreezeInventory
 } from '../../api/inventory'
 import { listAllWarehouse, getLocationTree } from '../../api/base'
+import { formatTime } from '../../utils/format.js'
 import request from '../../utils/request'
 
 const tab = ref('stock')

@@ -84,31 +84,48 @@ const submit = async () => {
 <style scoped>
 .register-page {
   height: 100vh;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #1f2d3d 0%, #2b4b6f 100%);
+  background: linear-gradient(140deg, #0a1834 0%, #10264f 48%, #143a6e 100%);
+}
+.register-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(91, 140, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(91, 140, 255, 0.05) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, #000 30%, transparent 75%);
 }
 .register-card {
+  position: relative;
   width: 440px;
-  background: #fff;
-  border-radius: 12px;
-  padding: 32px 36px 24px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(16px);
+  border-radius: 16px;
+  padding: 34px 38px 22px;
+  box-shadow: 0 24px 64px rgba(4, 14, 38, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.6);
 }
 .title {
   margin: 0;
   font-size: 22px;
-  text-align: center;
+  font-weight: 700;
+  color: var(--wms-text-main);
 }
 .subtitle {
   margin: 8px 0 20px;
-  text-align: center;
-  color: #909399;
+  color: var(--wms-text-sub);
   font-size: 13px;
 }
 .register-btn {
   width: 100%;
+  height: 44px;
+  font-size: 15px;
+  letter-spacing: 6px;
 }
 .links {
   display: flex;

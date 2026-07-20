@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="page">
     <el-card shadow="never">
       <!-- 搜索区 -->
       <el-form :inline="true" @submit.prevent>
@@ -52,7 +52,9 @@
           </template>
         </el-table-column>
         <el-table-column prop="applicant" label="制单人" width="100" />
-        <el-table-column prop="createTime" label="创建时间" width="160" />
+        <el-table-column prop="createTime" label="创建时间" width="160">
+          <template #default="{ row }">{{ formatTime(row.createTime) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row.id)">详情</el-button>
@@ -256,6 +258,7 @@ import {
 } from '../../api/inbound'
 import { listAllSupplier, listAllWarehouse, downloadBlob } from '../../api/base'
 import request from '../../utils/request'
+import { formatTime } from '../../utils/format.js'
 import ScanDialog from '../../components/ScanDialog.vue'
 
 const query = reactive({ pageNum: 1, pageSize: 10, orderNo: '', supplierId: null, status: null })

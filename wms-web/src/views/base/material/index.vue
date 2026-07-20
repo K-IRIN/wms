@@ -65,23 +65,35 @@
           </div>
 
           <el-table :data="rows" v-loading="loading" border>
-            <el-table-column prop="materialCode" label="编号" width="110" />
-            <el-table-column prop="materialName" label="物料名称" min-width="130" />
-            <el-table-column prop="spec" label="规格型号" width="120" show-overflow-tooltip />
-            <el-table-column prop="unit" label="单位" width="70" />
-            <el-table-column prop="purchasePrice" label="采购价" width="90" align="right" />
-            <el-table-column prop="salePrice" label="销售价" width="90" align="right" />
-            <el-table-column prop="shelfLife" label="保质期(天)" width="95" align="center">
-              <template #default="{ row }">{{ row.shelfLife ?? '—' }}</template>
+            <el-table-column prop="materialCode" label="编号" width="80" />
+            <el-table-column prop="materialName" label="物料名称" min-width="110" show-overflow-tooltip />
+            <el-table-column prop="spec" label="规格型号" width="95" show-overflow-tooltip />
+            <el-table-column prop="unit" label="单位" width="58" />
+            <el-table-column prop="purchasePrice" label="采购价" width="75" align="right" />
+            <el-table-column prop="salePrice" label="销售价" width="75" align="right" />
+            <el-table-column prop="totalQty" label="库存总量" width="85" align="right">
+              <template #default="{ row }">
+                <span :class="{ 'zero-stock': !row.totalQty }">{{ row.totalQty ?? 0 }}</span>
+              </template>
             </el-table-column>
-            <el-table-column label="状态" width="80" align="center">
+            <el-table-column prop="locations" label="存放库位" min-width="150">
+              <template #default="{ row }">
+                <div v-if="row.locations && row.locations !== '-'" class="location-text">
+                  <div v-for="loc in row.locations.split(' / ')" :key="loc" class="loc-item">
+                    <el-icon class="loc-icon"><MapLocation /></el-icon>{{ loc }}
+                  </div>
+                </div>
+                <span v-else class="no-location">暂无库存</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="70" align="center">
               <template #default="{ row }">
                 <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
                   {{ row.status === 1 ? '启用' : '停用' }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="190" fixed="right">
+            <el-table-column label="操作" width="160" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
                 <el-button link :type="row.status === 1 ? 'warning' : 'success'" @click="toggle(row)">
@@ -364,5 +376,28 @@ onMounted(() => {
 }
 .cat-node:hover .cat-ops {
   display: inline-flex;
+}
+.zero-stock {
+  color: #c0c4cc;
+}
+.location-text {
+  color: #2e6bff;
+  font-size: 12.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.loc-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  line-height: 1.5;
+}
+.loc-icon {
+  flex-shrink: 0;
+}
+.no-location {
+  color: #c0c4cc;
+  font-size: 12.5px;
 }
 </style>

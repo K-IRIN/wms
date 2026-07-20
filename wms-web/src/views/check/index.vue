@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="page">
     <el-card shadow="never">
       <!-- 搜索区 -->
       <el-form :inline="true" @submit.prevent>
@@ -58,7 +58,9 @@
         <el-table-column prop="auditor" label="审核人" width="100">
           <template #default="{ row }">{{ row.auditor || '—' }}</template>
         </el-table-column>
-        <el-table-column prop="createTime" label="创建时间" width="160" />
+        <el-table-column prop="createTime" label="创建时间" width="160">
+          <template #default="{ row }">{{ formatTime(row.createTime) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row.id)">
@@ -188,6 +190,7 @@ import {
   submitCheck, auditCheck, exportCheck
 } from '../../api/check'
 import { listAllWarehouse, getCategoryTree, getLocationTree, downloadBlob } from '../../api/base'
+import { formatTime } from '../../utils/format.js'
 
 const query = reactive({ pageNum: 1, pageSize: 10, orderNo: '', warehouseId: null, status: null, checkPeriod: null })
 const rows = ref([])

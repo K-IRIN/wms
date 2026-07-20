@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="page">
     <el-row :gutter="16">
       <el-col :span="10">
         <el-card shadow="never">

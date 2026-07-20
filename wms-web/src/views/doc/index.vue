@@ -78,6 +78,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { pageDoc, cancelDoc } from '../../api/doc.js'
+import { formatTime } from '../../utils/format.js'
 
 const STATUS_MAP = {
   INBOUND: [
@@ -109,10 +110,6 @@ function statusTagType(status) {
   if (status === 1) return 'primary'
   if (status === 2) return 'danger'
   return 'success'
-}
-
-function formatTime(t) {
-  return t ? String(t).replace('T', ' ').slice(0, 19) : '-'
 }
 
 function invalidRowClass({ row }) {

@@ -8,8 +8,12 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wms.common.BizException;
 import com.wms.common.Result;
 import com.wms.dto.excel.MaterialExcel;
+import com.wms.entity.WmsInventory;
+import com.wms.entity.WmsLocation;
 import com.wms.entity.WmsMaterial;
 import com.wms.entity.WmsMaterialCategory;
+import com.wms.service.WmsInventoryService;
+import com.wms.service.WmsLocationService;
 import com.wms.service.WmsMaterialCategoryService;
 import com.wms.service.WmsMaterialService;
 import com.wms.vo.CategoryTreeVO;
@@ -48,6 +52,8 @@ public class BasMaterialController {
 
     private final WmsMaterialService materialService;
     private final WmsMaterialCategoryService categoryService;
+    private final WmsInventoryService inventoryService;
+    private final WmsLocationService locationService;
 
     // ==================== 分类树 ====================
 
@@ -128,13 +134,13 @@ public class BasMaterialController {
                 .list());
     }
 
-    @Operation(summary = "物料分页查询")
+    @Operation(summary = "物料分页查询（含库存总量与存放库位）")
     @GetMapping("/page")
-    public Result<Page<WmsMaterial>> page(@RequestParam(defaultValue = "1") long pageNum,
-                                          @RequestParam(defaultValue = "10") long pageSize,
-                                          @RequestParam(required = false) String keyword,
-                                          @RequestParam(required = false) Long categoryId,
-                                          @RequestParam(required = false) Integer status) {
+    public Result<Page<Map<String, Object>>> page(@RequestParam(defaultValue = "1") long pageNum,
+                                                  @RequestParam(defaultValue = "10") long pageSize,
+                                                  @RequestParam(required = false) String keyword,
+                                                  @RequestParam(required = false) Long categoryId,
+                                                  @RequestParam(required = false) Integer status) {
         // 选中分类时，连同其所有子孙分类一起过滤
         Set<Long> categoryIds = null;
         if (categoryId != null) {
@@ -148,7 +154,31 @@ public class BasMaterialController {
                 .eq(status != null, WmsMaterial::getStatus, status)
                 .orderByAsc(WmsMaterial::getId)
                 .page(new Page<>(pageNum, pageSize));
-        return Result.ok(page);
+
+        // 聚合当前页物料的库存：总量 + 存放库位分布
+        List<Long> materialIds = page.getRecords().stream().map(WmsMaterial::getId).collect(Collectors.toList());
+        Map<Long, List<WmsInventory>> invByMaterial = materialIds.isEmpty() ? Map.of()
+                : inventoryService.lambdaQuery().in(WmsInventory::getMaterialId, materialIds).list().stream()
+                        .collect(Collectors.groupingBy(WmsInventory::getMaterialId));
+        Map<Long, String> locationMap = locationService.list().stream()
+                .collect(Collectors.toMap(WmsLocation::getId, WmsLocation::getLocationCode));
+
+        Page<Map<String, Object>> result = new Page<>(page.getCurrent(), page.getSize(), page.getTotal());
+        result.setRecords(page.getRecords().stream().map(m -> {
+            Map<String, Object> row = new java.util.HashMap<>();
+            BeanUtil.copyProperties(m, row);
+            List<WmsInventory> invs = invByMaterial.getOrDefault(m.getId(), List.of());
+            int totalQty = invs.stream().mapToInt(i -> i.getQuantity() == null ? 0 : i.getQuantity()).sum();
+            row.put("totalQty", totalQty);
+            // 存放库位，如 "A02-01-01(50) / A02-02-02(30)"；无库存显示 "-"
+            String locations = invs.stream()
+                    .filter(i -> i.getQuantity() != null && i.getQuantity() > 0)
+                    .map(i -> locationMap.getOrDefault(i.getLocationId(), "?") + "(" + i.getQuantity() + ")")
+                    .collect(Collectors.joining(" / "));
+            row.put("locations", locations.isEmpty() ? "-" : locations);
+            return row;
+        }).collect(Collectors.toList()));
+        return Result.ok(result);
     }
 
     private Set<Long> collectSubtreeIds(Long rootId) {
