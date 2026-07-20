@@ -21,8 +21,8 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addInterceptor(jwtInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns(
-                        // 登录、注册、验证码、连通性测试不需要 Token
-                        "/auth/login", "/auth/register", "/auth/captcha", "/test/ping",
+                        // 登录、注册、验证码不需要 Token
+                        "/auth/login", "/auth/register", "/auth/captcha",
                         // Knife4j 接口文档资源
                         "/doc.html", "/v3/api-docs/**", "/swagger-ui/**",
                         "/webjars/**", "/favicon.ico", "/service-worker.js",
