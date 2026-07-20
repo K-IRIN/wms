@@ -1,7 +1,7 @@
 -- ============================================================
 -- WMS 智能仓储管理系统 数据库脚本
 -- 数据库：wms    字符集：utf8mb4
--- 内容：建库 + 19 张表 + 初始化数据
+-- 内容：建库 + 25 张表 + 初始化数据（含 v2.0 AGV 扩展增量）
 -- 执行方式：mysql -uroot -p --default-character-set=utf8mb4 < sql/wms.sql
 -- ============================================================
 
@@ -466,9 +466,104 @@ INSERT INTO wms_customer (id, customer_code, customer_name, contact, phone, addr
 (1, 'C001', '杭州贸易有限公司', '王总', '13900000002', '杭州市西湖区XX大厦', '金牌');
 
 -- ============================================================
--- 完成！共 22 张表：
+-- 完成！共 25 张表：
 -- 权限 5 张：sys_user / sys_role / sys_menu / sys_user_role / sys_role_menu
 -- 基础 7 张：wms_warehouse / wms_area / wms_location / wms_material_category / wms_material / wms_supplier / wms_customer
 -- 单据 7 张：wms_inbound_order / wms_inbound_item / wms_outbound_order / wms_outbound_item / wms_check_order / wms_check_item / wms_move_order
 -- 库存日志 3 张：wms_inventory / wms_inventory_log / sys_operation_log
+-- AGV 3 张（v2.0 二期扩展）：wms_agv_device / wms_agv_task / wms_agv_log
 -- ============================================================
+
+-- ============================================================
+-- 二期扩展 v2.0：WCS-AGV 设备调度模拟（增量部分，阶段 E1）
+-- 新增 3 张表：wms_agv_device / wms_agv_task / wms_agv_log
+-- 库位表增加地图坐标；新增"设备运维员"角色与"设备监控"菜单
+-- ============================================================
+
+-- 【E1.2】库位地图坐标（为 AGV 路径模拟做准备）
+ALTER TABLE wms_location
+    ADD COLUMN pos_x INT DEFAULT NULL COMMENT '地图X坐标（列）' AFTER remark,
+    ADD COLUMN pos_y INT DEFAULT NULL COMMENT '地图Y坐标（行）' AFTER pos_x;
+
+-- 按库位编码自动填充坐标，如 A02-01-03 → pos_x=3, pos_y=1
+UPDATE wms_location
+SET pos_y = CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(location_code, '-', 2), '-', -1) AS UNSIGNED),
+    pos_x = CAST(SUBSTRING_INDEX(location_code, '-', -1) AS UNSIGNED);
+
+-- 【E1.1】AGV 设备档案表
+CREATE TABLE wms_agv_device (
+    id          BIGINT        NOT NULL AUTO_INCREMENT COMMENT '主键',
+    agv_code    VARCHAR(50)   NOT NULL COMMENT 'AGV编号',
+    agv_name    VARCHAR(50)   DEFAULT NULL COMMENT 'AGV名称',
+    max_load    DECIMAL(10,2) NOT NULL DEFAULT 500.00 COMMENT '最大载重(kg)',
+    speed       DECIMAL(5,2)  NOT NULL DEFAULT 1.00 COMMENT '行驶速度(格/秒)',
+    battery     INT           NOT NULL DEFAULT 100 COMMENT '电量(%)',
+    status      TINYINT       NOT NULL DEFAULT 0 COMMENT '运行状态：0空闲 1运行中 2充电中 3故障',
+    enabled     TINYINT       NOT NULL DEFAULT 1 COMMENT '是否启用：0停用 1启用',
+    pos_x       INT           NOT NULL DEFAULT 0 COMMENT '当前X坐标',
+    pos_y       INT           NOT NULL DEFAULT 0 COMMENT '当前Y坐标',
+    home_x      INT           NOT NULL DEFAULT 0 COMMENT '待命区X坐标',
+    home_y      INT           NOT NULL DEFAULT 0 COMMENT '待命区Y坐标',
+    remark      VARCHAR(500)  DEFAULT NULL COMMENT '备注',
+    create_time DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_agv_code (agv_code)
+) ENGINE = InnoDB COMMENT = 'AGV设备档案表';
+
+-- 【E1.1】AGV 搬运任务表
+CREATE TABLE wms_agv_task (
+    id               BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    task_no          VARCHAR(50)  NOT NULL COMMENT '任务编号',
+    task_type        VARCHAR(20)  NOT NULL COMMENT '任务类型：入库搬运/出库搬运/移库搬运',
+    order_no         VARCHAR(50)  DEFAULT NULL COMMENT '关联WMS单据号',
+    material_id      BIGINT       DEFAULT NULL COMMENT '搬运物料ID',
+    from_location_id BIGINT       DEFAULT NULL COMMENT '起点库位ID',
+    to_location_id   BIGINT       DEFAULT NULL COMMENT '终点库位ID',
+    priority         TINYINT      NOT NULL DEFAULT 0 COMMENT '优先级：0普通 1紧急',
+    status           TINYINT      NOT NULL DEFAULT 0 COMMENT '状态：0待分配 1前往取货 2取货中 3前往卸货 4卸货中 5返回待命区 6已完成 7已取消',
+    agv_id           BIGINT       DEFAULT NULL COMMENT '执行AGV的ID',
+    error_msg        VARCHAR(500) DEFAULT NULL COMMENT '异常信息',
+    start_time       DATETIME     DEFAULT NULL COMMENT '开始执行时间',
+    finish_time      DATETIME     DEFAULT NULL COMMENT '完成时间',
+    create_time      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_task_no (task_no),
+    KEY idx_agv_id (agv_id),
+    KEY idx_status (status),
+    KEY idx_order_no (order_no)
+) ENGINE = InnoDB COMMENT = 'AGV搬运任务表';
+
+-- 【E1.1】AGV 运行与告警日志表
+CREATE TABLE wms_agv_log (
+    id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    agv_id      BIGINT       DEFAULT NULL COMMENT 'AGV的ID',
+    task_id     BIGINT       DEFAULT NULL COMMENT '关联任务ID',
+    log_type    VARCHAR(20)  NOT NULL COMMENT '日志类型：状态变更/告警/故障/充电',
+    content     VARCHAR(500) NOT NULL COMMENT '日志内容',
+    create_time DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id),
+    KEY idx_agv_id (agv_id),
+    KEY idx_task_id (task_id)
+) ENGINE = InnoDB COMMENT = 'AGV运行日志表';
+
+-- 【E1.3】设备运维员角色
+INSERT INTO sys_role (id, role_code, role_name, description) VALUES
+(5, 'MAINTENANCE', '设备运维员', '负责 AGV 设备监控、异常注入与处理');
+
+-- 【E1.5】设备监控菜单（AGV 设备档案页）
+INSERT INTO sys_menu (id, parent_id, menu_name, menu_type, path, icon, sort) VALUES
+(19, 0,  '设备监控',     'M', '/agv',        'Monitor', 11),
+(20, 19, 'AGV 设备档案', 'C', '/agv/device', 'Van',     1);
+
+-- 菜单授权：管理员 + 设备运维员
+INSERT INTO sys_role_menu (role_id, menu_id) VALUES
+(1, 19), (1, 20),
+(5, 19), (5, 20);
+
+-- 示例 AGV 设备（待命区在 x=0 一列）
+INSERT INTO wms_agv_device (agv_code, agv_name, max_load, speed, battery, status, enabled, pos_x, pos_y, home_x, home_y, remark) VALUES
+('AGV-01', '搬运一号', 500.00, 1.00, 100, 0, 1, 0, 0, 0, 0, '主力搬运车'),
+('AGV-02', '搬运二号', 500.00, 1.00, 85,  0, 1, 0, 1, 0, 1, NULL),
+('AGV-03', '搬运三号', 800.00, 0.80, 60,  2, 1, 0, 2, 0, 2, '重载型，充电中');
