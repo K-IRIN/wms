@@ -81,6 +81,9 @@ public class OutboundService {
         if (order == null) {
             throw new BizException("出库单不存在");
         }
+        if (order.getInvalidFlag() != null && order.getInvalidFlag() == 1) {
+            throw new BizException("单据已作废，不可修改");
+        }
         if (order.getStatus() == STATUS_DONE || order.getStatus() == STATUS_AUDITED) {
             throw new BizException("单据已审核，不可修改");
         }
@@ -211,6 +214,9 @@ public class OutboundService {
         WmsOutboundOrder order = orderService.getById(dto.getId());
         if (order == null) {
             throw new BizException("出库单不存在");
+        }
+        if (order.getInvalidFlag() != null && order.getInvalidFlag() == 1) {
+            throw new BizException("单据已作废，不可审核");
         }
         if (order.getStatus() != STATUS_PENDING) {
             throw new BizException("单据当前状态不可审核");

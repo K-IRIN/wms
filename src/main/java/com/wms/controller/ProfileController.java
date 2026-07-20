@@ -1,5 +1,6 @@
 package com.wms.controller;
 
+import com.wms.annotation.OperationLog;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
@@ -51,6 +52,7 @@ public class ProfileController {
     }
 
     @Operation(summary = "修改个人信息（昵称/电话）")
+    @OperationLog("修改个人信息（昵称/电话）")
     @PutMapping("/info")
     public Result<Void> updateInfo(@RequestBody SysUser dto) {
         SysUser user = userService.getById(UserContext.getUserId());
@@ -61,6 +63,7 @@ public class ProfileController {
     }
 
     @Operation(summary = "上传头像")
+    @OperationLog("上传头像")
     @PostMapping("/avatar")
     public Result<String> avatar(@RequestParam("file") MultipartFile file) throws IOException {
         if (file == null || file.isEmpty()) {
@@ -88,6 +91,7 @@ public class ProfileController {
     }
 
     @Operation(summary = "修改密码（需校验原密码，操作留痕）")
+    @OperationLog("修改密码（需校验原密码，操作留痕）")
     @PutMapping("/password")
     public Result<Void> updatePassword(@Validated @RequestBody UpdatePwdDTO dto, HttpServletRequest request) {
         SysUser user = userService.getById(UserContext.getUserId());

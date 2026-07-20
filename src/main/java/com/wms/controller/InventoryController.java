@@ -1,5 +1,6 @@
 package com.wms.controller;
 
+import com.wms.annotation.OperationLog;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wms.common.Result;
 import com.wms.entity.WmsMoveOrder;
@@ -54,6 +55,7 @@ public class InventoryController {
     }
 
     @Operation(summary = "移库（仓内/跨仓）")
+    @OperationLog("移库（仓内/跨仓）")
     @PostMapping("/move")
     public Result<String> move(@RequestBody Map<String, Object> body) {
         Long materialId = Long.valueOf(body.get("materialId").toString());
@@ -82,6 +84,7 @@ public class InventoryController {
     }
 
     @Operation(summary = "冻结库存")
+    @OperationLog("冻结库存")
     @PutMapping("/freeze")
     public Result<Void> freeze(@RequestBody Map<String, Object> body) {
         Long inventoryId = Long.valueOf(body.get("inventoryId").toString());
@@ -91,6 +94,7 @@ public class InventoryController {
     }
 
     @Operation(summary = "解冻库存")
+    @OperationLog("解冻库存")
     @PutMapping("/unfreeze")
     public Result<Void> unfreeze(@RequestBody Map<String, Object> body) {
         Long inventoryId = Long.valueOf(body.get("inventoryId").toString());

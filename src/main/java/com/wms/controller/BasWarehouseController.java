@@ -1,5 +1,6 @@
 package com.wms.controller;
 
+import com.wms.annotation.OperationLog;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wms.common.BizException;
@@ -60,6 +61,7 @@ public class BasWarehouseController {
     }
 
     @Operation(summary = "新增仓库")
+    @OperationLog("新增仓库")
     @PostMapping("/add")
     public Result<Void> add(@RequestBody WmsWarehouse warehouse) {
         checkCodeUnique(warehouse.getWarehouseCode(), null);
@@ -72,6 +74,7 @@ public class BasWarehouseController {
     }
 
     @Operation(summary = "编辑仓库")
+    @OperationLog("编辑仓库")
     @PutMapping("/update")
     public Result<Void> update(@RequestBody WmsWarehouse warehouse) {
         if (warehouse.getId() == null) {
@@ -83,6 +86,7 @@ public class BasWarehouseController {
     }
 
     @Operation(summary = "删除仓库")
+    @OperationLog("删除仓库")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         long areaCount = areaService.lambdaQuery().eq(WmsArea::getWarehouseId, id).count();
@@ -94,6 +98,7 @@ public class BasWarehouseController {
     }
 
     @Operation(summary = "启用/停用仓库")
+    @OperationLog("启用/停用仓库")
     @PutMapping("/status/{id}/{status}")
     public Result<Void> status(@PathVariable Long id, @PathVariable Integer status) {
         WmsWarehouse w = new WmsWarehouse();

@@ -1,5 +1,6 @@
 package com.wms.controller;
 
+import com.wms.annotation.OperationLog;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.excel.EasyExcel;
@@ -70,6 +71,7 @@ public class BasCustomerController {
     }
 
     @Operation(summary = "新增客户")
+    @OperationLog("新增客户")
     @PostMapping("/add")
     public Result<Void> add(@RequestBody WmsCustomer customer) {
         checkCodeUnique(customer.getCustomerCode(), null);
@@ -82,6 +84,7 @@ public class BasCustomerController {
     }
 
     @Operation(summary = "编辑客户")
+    @OperationLog("编辑客户")
     @PutMapping("/update")
     public Result<Void> update(@RequestBody WmsCustomer customer) {
         if (customer.getId() == null) {
@@ -93,6 +96,7 @@ public class BasCustomerController {
     }
 
     @Operation(summary = "启用/停用客户（禁用而非删除）")
+    @OperationLog("启用/停用客户（禁用而非删除）")
     @PutMapping("/status/{id}/{status}")
     public Result<Void> status(@PathVariable Long id, @PathVariable Integer status) {
         WmsCustomer c = new WmsCustomer();
@@ -115,6 +119,7 @@ public class BasCustomerController {
     }
 
     @Operation(summary = "导入客户 Excel")
+    @OperationLog("导入客户 Excel")
     @PostMapping("/import")
     public Result<String> importExcel(@RequestParam("file") MultipartFile file) throws IOException {
         if (file == null || file.isEmpty()) {

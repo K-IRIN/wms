@@ -180,6 +180,9 @@ public class CheckService {
                 continue;
             }
             WmsCheckOrder order = orderService.getById(item.getOrderId());
+            if (order.getInvalidFlag() != null && order.getInvalidFlag() == 1) {
+                throw new BizException("盘点单已作废，不可录入");
+            }
             if (order.getStatus() != STATUS_CHECKING) {
                 throw new BizException("盘点单当前状态不可录入");
             }
@@ -197,7 +200,13 @@ public class CheckService {
     @Transactional(rollbackFor = Exception.class)
     public void submit(Long orderId) {
         WmsCheckOrder order = orderService.getById(orderId);
-        if (order == null || order.getStatus() != STATUS_CHECKING) {
+        if (order == null) {
+            throw new BizException("盘点单不存在");
+        }
+        if (order.getInvalidFlag() != null && order.getInvalidFlag() == 1) {
+            throw new BizException("盘点单已作废，不可提交");
+        }
+        if (order.getStatus() != STATUS_CHECKING) {
             throw new BizException("盘点单当前状态不可提交");
         }
         List<WmsCheckItem> items = itemService.lambdaQuery()
@@ -220,7 +229,13 @@ public class CheckService {
     @Transactional(rollbackFor = Exception.class)
     public void audit(AuditDTO dto) {
         WmsCheckOrder order = orderService.getById(dto.getId());
-        if (order == null || order.getStatus() != STATUS_AUDITING) {
+        if (order == null) {
+            throw new BizException("盘点单不存在");
+        }
+        if (order.getInvalidFlag() != null && order.getInvalidFlag() == 1) {
+            throw new BizException("盘点单已作废，不可审核");
+        }
+        if (order.getStatus() != STATUS_AUDITING) {
             throw new BizException("盘点单当前状态不可审核");
         }
         var roles = UserContext.get().roles();

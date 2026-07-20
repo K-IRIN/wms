@@ -96,6 +96,9 @@ public class InboundService {
         if (order == null) {
             throw new BizException("入库单不存在");
         }
+        if (order.getInvalidFlag() != null && order.getInvalidFlag() == 1) {
+            throw new BizException("单据已作废，不可操作");
+        }
         if (order.getStatus() == STATUS_DONE) {
             throw new BizException("单据已完成，不可修改");
         }
@@ -306,6 +309,9 @@ public class InboundService {
         if (order == null) {
             throw new BizException("入库单不存在");
         }
+        if (order.getInvalidFlag() != null && order.getInvalidFlag() == 1) {
+            throw new BizException("单据已作废，不可审核");
+        }
         if (order.getStatus() != STATUS_PENDING) {
             throw new BizException("单据当前状态不可审核");
         }
@@ -398,6 +404,9 @@ public class InboundService {
         WmsInboundOrder order = orderService.getById(orderId);
         if (order == null) {
             throw new BizException("入库单不存在");
+        }
+        if (order.getInvalidFlag() != null && order.getInvalidFlag() == 1) {
+            throw new BizException("单据已作废，不可" + action);
         }
         if (order.getStatus() != STATUS_PENDING) {
             throw new BizException("单据当前状态不可" + action);

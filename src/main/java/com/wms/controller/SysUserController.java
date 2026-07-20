@@ -1,5 +1,6 @@
 package com.wms.controller;
 
+import com.wms.annotation.OperationLog;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.BCrypt;
@@ -88,6 +89,7 @@ public class SysUserController {
     }
 
     @Operation(summary = "新增用户（默认初始密码 123456）")
+    @OperationLog("新增用户（默认初始密码 123456）")
     @PostMapping
     public Result<Void> add(@Validated @RequestBody UserSaveDTO dto) {
         requireAdmin();
@@ -105,6 +107,7 @@ public class SysUserController {
     }
 
     @Operation(summary = "编辑用户")
+    @OperationLog("编辑用户")
     @PutMapping
     public Result<Void> update(@Validated @RequestBody UserSaveDTO dto) {
         requireAdmin();
@@ -128,6 +131,7 @@ public class SysUserController {
     }
 
     @Operation(summary = "删除（注销）用户")
+    @OperationLog("删除（注销）用户")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         requireAdmin();
@@ -140,6 +144,7 @@ public class SysUserController {
     }
 
     @Operation(summary = "批量启用/禁用账号")
+    @OperationLog("批量启用/禁用账号")
     @PutMapping("/status")
     public Result<Void> status(@Validated @RequestBody StatusBatchDTO dto) {
         requireAdmin();
@@ -153,6 +158,7 @@ public class SysUserController {
     }
 
     @Operation(summary = "重置密码为 123456")
+    @OperationLog("重置密码为 123456")
     @PutMapping("/resetPwd/{id}")
     public Result<Void> resetPwd(@PathVariable Long id) {
         requireAdmin();

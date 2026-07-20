@@ -55,6 +55,12 @@ public class WmsCheckOrder implements Serializable {
     /** 备注 */
     private String remark;
 
+    /** 作废标记：0正常 1已作废 */
+    private Integer invalidFlag;
+
+    /** 作废原因 */
+    private String invalidReason;
+
     /** 创建时间 */
     private LocalDateTime createTime;
 

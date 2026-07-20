@@ -1,5 +1,6 @@
 package com.wms.controller;
 
+import com.wms.annotation.OperationLog;
 import com.wms.common.Result;
 import com.wms.dto.LoginDTO;
 import com.wms.dto.RegisterDTO;
@@ -36,12 +37,14 @@ public class AuthController {
     }
 
     @Operation(summary = "账号密码登录")
+    @OperationLog("账号密码登录")
     @PostMapping("/login")
     public Result<LoginVO> login(@Validated @RequestBody LoginDTO dto, HttpServletRequest request) {
         return Result.ok(authService.login(dto, request.getRemoteAddr()));
     }
 
     @Operation(summary = "用户注册（默认分配普通操作员角色）")
+    @OperationLog("用户注册（默认分配普通操作员角色）")
     @PostMapping("/register")
     public Result<Void> register(@Validated @RequestBody RegisterDTO dto) {
         authService.register(dto);
@@ -55,6 +58,7 @@ public class AuthController {
     }
 
     @Operation(summary = "退出登录")
+    @OperationLog("退出登录")
     @PostMapping("/logout")
     public Result<Void> logout() {
         return Result.ok();
