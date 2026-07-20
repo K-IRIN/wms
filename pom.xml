@@ -46,6 +46,11 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-aop</artifactId>
         </dependency>
+        <!-- WebSocket（v2.0 AGV 实时状态推送） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
         <!-- MyBatis-Plus（Spring Boot 3 专用 starter） -->
         <dependency>
             <groupId>com.baomidou</groupId>

@@ -38,6 +38,12 @@ public class WmsLocation implements Serializable {
     /** 备注 */
     private String remark;
 
+    /** 地图X坐标（v2.0 AGV 路径模拟用） */
+    private Integer posX;
+
+    /** 地图Y坐标（v2.0 AGV 路径模拟用） */
+    private Integer posY;
+
     /** 创建时间 */
     private LocalDateTime createTime;
 

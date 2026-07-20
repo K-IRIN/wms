@@ -12,7 +12,9 @@ export default defineConfig({
       // 前端 /api 请求代理到后端 8080，解决开发环境跨域
       '/api': {
         target: 'http://localhost:8080',
-        changeOrigin: true
+        changeOrigin: true,
+        // AGV 实时推送走 WebSocket（/api/ws/agv），需要升级协议支持
+        ws: true
       }
     }
   }

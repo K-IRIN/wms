@@ -567,3 +567,7 @@ INSERT INTO wms_agv_device (agv_code, agv_name, max_load, speed, battery, status
 ('AGV-01', '搬运一号', 500.00, 1.00, 100, 0, 1, 0, 0, 0, 0, '主力搬运车'),
 ('AGV-02', '搬运二号', 500.00, 1.00, 85,  0, 1, 0, 1, 0, 1, NULL),
 ('AGV-03', '搬运三号', 800.00, 0.80, 60,  2, 1, 0, 2, 0, 2, '重载型，充电中');
+
+-- 【E2】AGV 虚拟月台库位：入库搬运的起点 / 出库搬运的终点（位于收货区 A01，坐标 (0,0)）
+INSERT INTO wms_location (area_id, location_code, capacity, goods_type, status, remark, pos_x, pos_y) VALUES
+(1, 'A01-DOCK', NULL, 'AGV虚拟月台', 0, 'AGV 装卸货月台（虚拟库位，请勿上架真实物料）', 0, 0);

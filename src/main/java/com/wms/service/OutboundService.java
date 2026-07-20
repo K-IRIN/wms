@@ -46,6 +46,7 @@ public class OutboundService {
     private final WmsInventoryLogService inventoryLogService;
     private final WmsCustomerService customerService;
     private final WmsWarehouseService warehouseService;
+    private final AgvHookService agvHookService;
 
     /** 单据状态：0待审核 1已审核（拣货/复核中） 2已驳回 3已完成 */
     public static final int STATUS_PENDING = 0;
@@ -266,6 +267,8 @@ public class OutboundService {
         order.setPickStatus(0);
         order.setStatus(STATUS_AUDITED);
         orderService.updateById(order);
+        // AGV 联动：为每条拣货明细生成出库搬运任务（拣货库位 → 发货月台）
+        agvHookService.onPickGenerated(order, items);
     }
 
     // ==================== 拣货（扫码核验） ====================

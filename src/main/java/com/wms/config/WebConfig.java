@@ -26,6 +26,8 @@ public class WebConfig implements WebMvcConfigurer {
                         // Knife4j 接口文档资源
                         "/doc.html", "/v3/api-docs/**", "/swagger-ui/**",
                         "/webjars/**", "/favicon.ico", "/service-worker.js",
+                        // WebSocket 握手（AGV 实时推送，鉴权在握手拦截器中单独处理）
+                        "/ws/**",
                         // 上传文件（头像等）
                         "/uploads/**"
                 );

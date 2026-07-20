@@ -39,6 +39,7 @@ public class DocService {
     private final WmsWarehouseService warehouseService;
     private final WmsMaterialService materialService;
     private final WmsLocationService locationService;
+    private final AgvHookService agvHookService;
 
     /** 各类型单据状态文案 */
     private static final Map<String, Map<Integer, String>> STATUS_NAMES = Map.of(
@@ -114,6 +115,8 @@ public class DocService {
                         .set(WmsInboundOrder::getInvalidFlag, 1)
                         .set(WmsInboundOrder::getInvalidReason, dto.getReason() + "（操作人：" + operator + "）")
                         .update();
+                // AGV 联动：取消该单未完成的搬运任务
+                agvHookService.onOrderInvalid(order.getOrderNo());
             }
             case "OUTBOUND" -> {
                 WmsOutboundOrder order = outboundOrderService.getById(dto.getId());
@@ -129,6 +132,8 @@ public class DocService {
                         .set(WmsOutboundOrder::getInvalidFlag, 1)
                         .set(WmsOutboundOrder::getInvalidReason, dto.getReason() + "（操作人：" + operator + "）")
                         .update();
+                // AGV 联动：取消该单未完成的搬运任务
+                agvHookService.onOrderInvalid(order.getOrderNo());
             }
             case "MOVE" -> {
                 WmsMoveOrder order = moveOrderService.getById(dto.getId());

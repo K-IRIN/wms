@@ -151,6 +151,7 @@ public class BasLocationController {
         if (location.getStatus() == null) {
             location.setStatus(0);
         }
+        parsePosFromCode(location);
         locationService.save(location);
         return Result.ok();
     }
@@ -162,8 +163,25 @@ public class BasLocationController {
         if (location.getId() == null) {
             throw new BizException("缺少库位ID");
         }
+        parsePosFromCode(location);
         locationService.updateById(location);
         return Result.ok();
+    }
+
+    /** 按库位编号自动解析地图坐标，如 A02-01-03 → pos_x=3, pos_y=1（v2.0 AGV 路径模拟用） */
+    private void parsePosFromCode(WmsLocation location) {
+        if (location.getLocationCode() == null) {
+            return;
+        }
+        try {
+            String[] parts = location.getLocationCode().split("-");
+            if (parts.length >= 3) {
+                location.setPosY(Integer.parseInt(parts[1]));
+                location.setPosX(Integer.parseInt(parts[2]));
+            }
+        } catch (NumberFormatException ignored) {
+            // 编号不符合规则时坐标留空，AGV 调度会将其视为月台位置
+        }
     }
 
     @Operation(summary = "删除库位")

@@ -46,6 +46,7 @@ public class InboundService {
     private final WmsInventoryLogService inventoryLogService;
     private final WmsSupplierService supplierService;
     private final WmsWarehouseService warehouseService;
+    private final AgvHookService agvHookService;
 
     /** 单据状态：0待审核 2已驳回 3已完成 */
     public static final int STATUS_PENDING = 0;
@@ -278,6 +279,8 @@ public class InboundService {
         itemService.updateById(item);
         location.setStatus(1); // 占用
         locationService.updateById(location);
+        // AGV 联动：生成入库搬运任务（收货月台 → 目标库位）
+        agvHookService.onShelf(item.getOrderId(), item.getMaterialId(), location.getId());
     }
 
     /** 取消上架（退回库位） */
@@ -299,6 +302,8 @@ public class InboundService {
                 .set(WmsInboundItem::getLocationId, null)
                 .set(WmsInboundItem::getShelfStatus, 0)
                 .update();
+        // AGV 联动：取消该明细未完成的入库搬运任务
+        agvHookService.onCancelShelf(item.getOrderId(), item.getMaterialId());
     }
 
     // ==================== 审核 ====================

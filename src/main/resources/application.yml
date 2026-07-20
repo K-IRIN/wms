@@ -44,3 +44,8 @@ springdoc:
   api-docs:
     path: /v3/api-docs
   default-flat-param-object: true
+
+# ==================== AGV 调度模拟（v2.0 二期扩展） ====================
+# 全局开关：false 时系统不生成 AGV 任务、调度引擎休眠，表现与 v1.0 完全一致
+agv:
+  enabled: true

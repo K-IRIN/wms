@@ -37,6 +37,7 @@ public class InventoryService {
     private final WmsMoveOrderService moveOrderService;
     private final WmsWarehouseService warehouseService;
     private final WmsAreaService areaService;
+    private final AgvHookService agvHookService;
 
     /** 临期阈值：距到期日 <= 30 天进入预警清单 */
     public static final int EXPIRY_WARN_DAYS = 30;
@@ -228,6 +229,8 @@ public class InventoryService {
         move.setOperator(currentName());
         move.setRemark(remark);
         moveOrderService.save(move);
+        // AGV 联动：生成移库搬运任务（源库位 → 目标库位）
+        agvHookService.onMove(move.getOrderNo(), materialId, fromLocationId, toLocationId);
         // 双向流水
         writeLog(materialId, fromInv.getWarehouseId(), fromLocationId, "移库",
                 -quantity, fromInv.getQuantity(), fromInv.getQuantity() - quantity, move.getOrderNo());

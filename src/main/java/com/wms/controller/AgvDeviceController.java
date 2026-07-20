@@ -65,6 +65,20 @@ public class AgvDeviceController {
         return Result.ok(deviceService.lambdaQuery().orderByAsc(WmsAgvDevice::getId).list());
     }
 
+    @Operation(summary = "AGV 运行/告警日志分页")
+    @GetMapping("/log/page")
+    public Result<Page<WmsAgvLog>> logPage(@RequestParam(defaultValue = "1") long pageNum,
+                                           @RequestParam(defaultValue = "10") long pageSize,
+                                           @RequestParam(required = false) Long agvId,
+                                           @RequestParam(required = false) String logType) {
+        Page<WmsAgvLog> page = logService.lambdaQuery()
+                .eq(agvId != null, WmsAgvLog::getAgvId, agvId)
+                .eq(StrUtil.isNotBlank(logType), WmsAgvLog::getLogType, logType)
+                .orderByDesc(WmsAgvLog::getId)
+                .page(new Page<>(pageNum, pageSize));
+        return Result.ok(page);
+    }
+
     @Operation(summary = "新增 AGV 设备")
     @OperationLog("新增AGV设备")
     @PostMapping("/add")
