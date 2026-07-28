@@ -1,7 +1,14 @@
 <template>
-  <el-container class="layout-container">
-    <!-- 左侧菜单：按登录用户的角色菜单动态渲染 -->
-    <el-aside width="224px" class="aside">
+  <el-container class="layout-container" :class="{ mobile: isMobile }">
+    <!-- 手机端遮罩层（点击关闭侧边栏） -->
+    <div
+      v-if="isMobile && sidebarOpen"
+      class="sidebar-overlay"
+      @click="sidebarOpen = false"
+    />
+
+    <!-- 左侧菜单 -->
+    <el-aside width="224px" class="aside" :class="{ 'aside-open': sidebarOpen }">
       <div class="logo">
         <div class="logo-icon">
           <el-icon :size="22"><Box /></el-icon>
@@ -43,12 +50,22 @@
     <!-- 右侧：顶栏 + 主内容 -->
     <el-container>
       <el-header class="header" height="56px">
-        <el-breadcrumb separator="/">
+        <div class="header-left">
+          <!-- 手机端汉堡菜单按钮 -->
+          <el-icon
+            v-if="isMobile"
+            class="hamburger"
+            @click="sidebarOpen = !sidebarOpen"
+          >
+            <component :is="sidebarOpen ? 'Close' : 'Menu'" />
+          </el-icon>
+          <el-breadcrumb separator="/">
           <el-breadcrumb-item :to="{ path: '/dashboard' }">首页</el-breadcrumb-item>
           <el-breadcrumb-item v-if="$route.meta.title && $route.path !== '/dashboard'">
             {{ $route.meta.title }}
           </el-breadcrumb-item>
         </el-breadcrumb>
+        </div>
         <el-dropdown @command="onCommand">
           <span class="user-info">
             <el-avatar :size="30" :src="avatarUrl" class="user-avatar">{{ avatarText }}</el-avatar>
@@ -75,7 +92,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { useUserStore } from '../store/user'
@@ -84,6 +101,24 @@ import { useAgvStore } from '../store/agv'
 const store = useUserStore()
 const agvStore = useAgvStore()
 const router = useRouter()
+
+// ========== 手机端自适应 ==========
+const isMobile = ref(window.innerWidth < 768)
+const sidebarOpen = ref(false)
+
+const onResize = () => {
+  isMobile.value = window.innerWidth < 768
+  // 切回桌面端时自动收起浮层，恢复正常布局
+  if (!isMobile.value) sidebarOpen.value = false
+}
+onMounted(() => window.addEventListener('resize', onResize))
+onUnmounted(() => window.removeEventListener('resize', onResize))
+
+// 手机端点击菜单导航后自动关闭侧边栏
+watch(
+  () => router.currentRoute.value.path,
+  () => { if (isMobile.value) sidebarOpen.value = false }
+)
 
 // 登录进入布局后建立 AGV 实时推送连接（全局仅一次，地图页/监控页共用）
 onMounted(() => {
@@ -286,5 +321,57 @@ const onCommand = async (cmd) => {
   background: var(--wms-content-bg);
   padding: 0;
   overflow-y: auto;
+}
+
+/* ==================== 手机端自适应 ==================== */
+/* 遮罩层 */
+.sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 90;
+}
+
+/* 汉堡按钮 */
+.hamburger {
+  cursor: pointer;
+  font-size: 22px;
+  color: var(--wms-text-main);
+  margin-right: 10px;
+  flex-shrink: 0;
+}
+.hamburger:hover {
+  color: var(--wms-primary);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* 768px 以下：侧边栏变为可滑出的浮层 */
+@media (max-width: 767px) {
+  .layout-container.mobile .aside {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.28s ease;
+    box-shadow: none;
+  }
+
+  .layout-container.mobile .aside.aside-open {
+    transform: translateX(0);
+    box-shadow: 4px 0 24px rgba(8, 24, 58, 0.4);
+  }
+
+  /* 手机端顶栏略窄 */
+  .header {
+    padding: 0 12px;
+    height: 48px;
+  }
 }
 </style>
