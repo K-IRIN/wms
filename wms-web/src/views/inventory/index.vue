@@ -260,6 +260,7 @@ import { formatTime } from '../../utils/format.js'
 import request from '../../utils/request'
 
 const tab = ref('stock')
+const route = useRoute()
 const dim = ref('summary')
 const warehouses = ref([])
 const materials = ref([])
@@ -420,7 +421,6 @@ onMounted(async () => {
   warehouses.value = w.data
   materials.value = m.data
   // 读取 query 参数预填筛选（从物料列表的 ❄ 链接跳转过来）
-  const route = useRoute()
   if (route.query.materialId) {
     logQuery.materialId = Number(route.query.materialId)
     logQuery.changeType = '冻结'
