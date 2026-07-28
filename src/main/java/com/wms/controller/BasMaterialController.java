@@ -16,6 +16,8 @@ import com.wms.service.WmsInventoryService;
 import com.wms.service.WmsLocationService;
 import com.wms.service.WmsMaterialCategoryService;
 import com.wms.service.WmsMaterialService;
+import java.util.HashMap;
+import java.util.stream.Collectors;
 import com.wms.vo.CategoryTreeVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -79,6 +81,31 @@ public class BasMaterialController {
             }
         }
         return Result.ok(roots);
+    }
+
+    @Operation(summary = "一级分类 + 物料数量（用于顶部 chip 筛选）")
+    @GetMapping("/category/counts")
+    public Result<List<Map<String, Object>>> categoryCounts() {
+        // 一级分类（parent_id=0），按 sort 排序，统计每个分类下的物料数（含所有状态的物料）
+        List<WmsMaterialCategory> roots = categoryService.lambdaQuery()
+                .eq(WmsMaterialCategory::getParentId, 0L)
+                .orderByAsc(WmsMaterialCategory::getSort)
+                .orderByAsc(WmsMaterialCategory::getId)
+                .list();
+        if (roots.isEmpty()) {
+            return Result.ok(List.of());
+        }
+        Map<Long, Long> countMap = materialService.lambdaQuery()
+                .in(WmsMaterial::getCategoryId, roots.stream().map(WmsMaterialCategory::getId).toList())
+                .list().stream()
+                .collect(Collectors.groupingBy(WmsMaterial::getCategoryId, Collectors.counting()));
+        return Result.ok(roots.stream().map(c -> {
+            Map<String, Object> row = new HashMap<>();
+            row.put("id", c.getId());
+            row.put("name", c.getCategoryName());
+            row.put("count", countMap.getOrDefault(c.getId(), 0L));
+            return row;
+        }).collect(Collectors.toList()));
     }
 
     @Operation(summary = "新增分类")

@@ -1,46 +1,35 @@
 <template>
   <div>
-    <el-row :gutter="12">
-      <!-- 左侧分类树 -->
-      <el-col :span="5">
-        <el-card shadow="never">
-          <template #header>
-            <div style="display: flex; justify-content: space-between; align-items: center">
-              <span>物料分类</span>
-              <el-button link type="primary" size="small" @click="openCategoryDialog()">+ 新增</el-button>
-            </div>
-          </template>
-          <el-tree :data="categoryTree" node-key="id" :props="{ label: 'categoryName' }" default-expand-all
-            highlight-current :expand-on-click-node="false" @node-click="onCategoryClick">
-            <template #default="{ data }">
-              <div class="cat-node">
-                <span>{{ data.categoryName }}</span>
-                <span class="cat-ops">
-                  <el-button link type="primary" size="small" @click.stop="openCategoryDialog(null, data)">+</el-button>
-                  <el-button link type="primary" size="small" @click.stop="openCategoryDialog(data)">改</el-button>
-                  <el-popconfirm title="确定删除该分类？" @confirm="removeCategory(data)">
-                    <template #reference>
-                      <el-button link type="danger" size="small" @click.stop>删</el-button>
-                    </template>
-                  </el-popconfirm>
-                </span>
-              </div>
-            </template>
-          </el-tree>
-          <el-empty v-if="!categoryTree.length" description="暂无分类" :image-size="60" />
-        </el-card>
-      </el-col>
-
-      <!-- 右侧物料表格 -->
-      <el-col :span="19">
-        <el-card shadow="never">
+    <el-card shadow="never">
+      <!-- 分类筛选 chip 行（替代原左侧分类树卡片） -->
+      <div class="category-chips">
+        <div class="chips-left">
+          <span
+            class="chip"
+            :class="{ active: query.categoryId == null }"
+            @click="onChipClick(null)"
+          >
+            全部 <em>{{ totalCount }}</em>
+          </span>
+          <span
+            v-for="cat in categoryChips"
+            :key="cat.id"
+            class="chip"
+            :class="{ active: query.categoryId === cat.id }"
+            @click="onChipClick(cat)"
+          >
+            {{ cat.name }} <em>{{ cat.count }}</em>
+          </span>
+          <el-button link type="primary" size="small" class="chip-add" @click="openCategoryDialog()">+ 新增分类</el-button>
+        </div>
+        <div class="chips-right">
           <el-form :inline="true" @submit.prevent>
-            <el-form-item label="关键字">
-              <el-input v-model="query.keyword" placeholder="物料名称/编号" clearable style="width: 180px"
+            <el-form-item>
+              <el-input v-model="query.keyword" placeholder="关键字 / 物料名" clearable style="width: 200px"
                 @keyup.enter="load(1)" />
             </el-form-item>
-            <el-form-item label="状态">
-              <el-select v-model="query.status" placeholder="全部" clearable style="width: 100px">
+            <el-form-item>
+              <el-select v-model="query.status" placeholder="状态" clearable style="width: 100px">
                 <el-option label="启用" :value="1" />
                 <el-option label="停用" :value="0" />
               </el-select>
@@ -50,80 +39,76 @@
               <el-button @click="reset">重置</el-button>
             </el-form-item>
           </el-form>
+        </div>
+      </div>
 
-          <div style="margin-bottom: 12px">
-            <el-button type="primary" @click="openDialog()">新增物料</el-button>
-            <el-upload :show-file-list="false" accept=".xlsx,.xls" :http-request="doImport"
-              style="display: inline-block; margin: 0 8px">
-              <el-button type="success">导入 Excel</el-button>
-            </el-upload>
-            <el-button @click="doExport">导出 Excel</el-button>
-            <span v-if="currentCategory" style="margin-left: 10px; color: #909399; font-size: 13px">
-              当前分类：{{ currentCategory.categoryName }}
-              <el-link type="primary" style="margin-left: 6px" @click="clearCategory">清除</el-link>
-            </span>
-          </div>
+      <div style="margin-bottom: 12px">
+        <el-button type="primary" @click="openDialog()">新增物料</el-button>
+        <el-upload :show-file-list="false" accept=".xlsx,.xls" :http-request="doImport"
+          style="display: inline-block; margin: 0 8px">
+          <el-button type="success">导入 Excel</el-button>
+        </el-upload>
+        <el-button @click="doExport">导出 Excel</el-button>
+      </div>
 
-          <el-table :data="rows" v-loading="loading" border>
-            <el-table-column prop="materialCode" label="编号" width="80" />
-            <el-table-column prop="materialName" label="物料名称" min-width="110" show-overflow-tooltip />
-            <el-table-column prop="spec" label="规格型号" width="95" show-overflow-tooltip />
-            <el-table-column prop="unit" label="单位" width="58" />
-            <el-table-column prop="purchasePrice" label="采购价" width="75" align="right" />
-            <el-table-column prop="salePrice" label="销售价" width="75" align="right" />
-            <el-table-column prop="totalQty" label="库存总量" width="95" align="right">
-              <template #default="{ row }">
-                <div>
-                  <span :class="{ 'zero-stock': !row.totalQty }">{{ row.totalQty ?? 0 }}</span>
-                  <el-link
-                    v-if="(row.frozenQty || 0) > 0"
-                    type="warning"
-                    :underline="false"
-                    class="frozen-mini"
-                    title="该物料有冻结库存，点击跳转到库存流水"
-                    @click="goFrozenLogs(row)"
-                  >❄ {{ row.frozenQty }}</el-link>
-                </div>
+      <el-table :data="rows" v-loading="loading" border>
+        <el-table-column prop="materialCode" label="编号" width="80" />
+        <el-table-column prop="materialName" label="物料名称" min-width="110" show-overflow-tooltip />
+        <el-table-column prop="spec" label="规格型号" width="95" show-overflow-tooltip />
+        <el-table-column prop="unit" label="单位" width="58" />
+        <el-table-column prop="purchasePrice" label="采购价" width="75" align="right" />
+        <el-table-column prop="salePrice" label="销售价" width="75" align="right" />
+        <el-table-column prop="totalQty" label="库存总量" width="95" align="right">
+          <template #default="{ row }">
+            <div>
+              <span :class="{ 'zero-stock': !row.totalQty }">{{ row.totalQty ?? 0 }}</span>
+              <el-link
+                v-if="(row.frozenQty || 0) > 0"
+                type="warning"
+                :underline="false"
+                class="frozen-mini"
+                title="该物料有冻结库存，点击跳转到库存流水"
+                @click="goFrozenLogs(row)"
+              >❄ {{ row.frozenQty }}</el-link>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="locations" label="存放库位" min-width="150">
+          <template #default="{ row }">
+            <div v-if="row.locations && row.locations !== '-'" class="location-text">
+              <div v-for="loc in row.locations.split(' / ')" :key="loc" class="loc-item">
+                <el-icon class="loc-icon"><MapLocation /></el-icon>{{ loc }}
+              </div>
+            </div>
+            <span v-else class="no-location">暂无库存</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="70" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
+              {{ row.status === 1 ? '启用' : '停用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="160" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
+            <el-button link :type="row.status === 1 ? 'warning' : 'success'" @click="toggle(row)">
+              {{ row.status === 1 ? '停用' : '启用' }}
+            </el-button>
+            <el-popconfirm title="确定删除该物料？" @confirm="remove(row)">
+              <template #reference>
+                <el-button link type="danger">删除</el-button>
               </template>
-            </el-table-column>
-            <el-table-column prop="locations" label="存放库位" min-width="150">
-              <template #default="{ row }">
-                <div v-if="row.locations && row.locations !== '-'" class="location-text">
-                  <div v-for="loc in row.locations.split(' / ')" :key="loc" class="loc-item">
-                    <el-icon class="loc-icon"><MapLocation /></el-icon>{{ loc }}
-                  </div>
-                </div>
-                <span v-else class="no-location">暂无库存</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="状态" width="70" align="center">
-              <template #default="{ row }">
-                <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
-                  {{ row.status === 1 ? '启用' : '停用' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="160" fixed="right">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
-                <el-button link :type="row.status === 1 ? 'warning' : 'success'" @click="toggle(row)">
-                  {{ row.status === 1 ? '停用' : '启用' }}
-                </el-button>
-                <el-popconfirm title="确定删除该物料？" @confirm="remove(row)">
-                  <template #reference>
-                    <el-button link type="danger">删除</el-button>
-                  </template>
-                </el-popconfirm>
-              </template>
-            </el-table-column>
-          </el-table>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+      </el-table>
 
-          <el-pagination style="margin-top: 12px; justify-content: flex-end" background
-            layout="total, sizes, prev, pager, next" :total="total" v-model:current-page="query.pageNum"
-            v-model:page-size="query.pageSize" :page-sizes="[10, 20, 50]" @change="load()" />
-        </el-card>
-      </el-col>
-    </el-row>
+      <el-pagination style="margin-top: 12px; justify-content: flex-end" background
+        layout="total, sizes, prev, pager, next" :total="total" v-model:current-page="query.pageNum"
+        v-model:page-size="query.pageSize" :page-sizes="[10, 20, 50]" @change="load()" />
+    </el-card>
 
     <!-- 物料弹窗 -->
     <el-dialog v-model="dialogVisible" :title="form.id ? '编辑物料' : '新增物料'" width="520px" destroy-on-close>
@@ -221,21 +206,22 @@ import { ElMessage } from 'element-plus'
 import {
   pageMaterial, addMaterial, updateMaterial, deleteMaterial, updateMaterialStatus,
   importMaterial, exportMaterial, downloadBlob,
-  getCategoryTree, addCategory, updateCategory, deleteCategory
+  getCategoryTree, getCategoryCounts, addCategory, updateCategory, deleteCategory
 } from '../../../api/base'
 
 const query = reactive({ pageNum: 1, pageSize: 10, keyword: '', status: null, categoryId: null })
 const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
-const categoryTree = ref([])
+const categoryTree = ref([])        // 新增/编辑分类弹窗里用（保留）
+const categoryChips = ref([])      // 顶部 chip 栏数据：{id, name, count}
+const totalCount = ref(0)          // "全部" chip 的数量 = 所有物料数
 const router = useRouter()
 
 // 点击冻结标识 → 跳到库存管理 → 变动流水（预选物料 + 类型=冻结）
 function goFrozenLogs(row) {
   router.push({ path: '/inventory', query: { materialId: row.id, type: 'frozen' } })
 }
-const currentCategory = ref(null)
 
 const dialogVisible = ref(false)
 const catDialogVisible = ref(false)
@@ -271,30 +257,33 @@ async function load(page) {
 }
 
 async function loadTree() {
-  const res = await getCategoryTree()
-  categoryTree.value = res.data
+  const [treeRes, countsRes] = await Promise.all([getCategoryTree(), getCategoryCounts()])
+  categoryTree.value = treeRes.data
+  categoryChips.value = countsRes.data
+  totalCount.value = countsRes.data.reduce((sum, c) => sum + Number(c.count || 0), 0)
 }
 
 function reset() {
   query.keyword = ''
   query.status = null
+  query.categoryId = null
   load(1)
 }
 
-function onCategoryClick(data) {
-  currentCategory.value = data
-  query.categoryId = data.id
+function onChipClick(cat) {
+  query.categoryId = cat ? cat.id : null
   load(1)
 }
 
 function clearCategory() {
-  currentCategory.value = null
+  // 保留兼容（不再有"当前分类"提示），但保留供其他处使用
   query.categoryId = null
   load(1)
 }
 
 function openDialog(row) {
-  Object.assign(form, row ? { ...row } : { ...emptyForm, categoryId: currentCategory.value?.id ?? null })
+  // 新增时若当前选中了某个分类，自动预填该分类
+  Object.assign(form, row ? { ...row } : { ...emptyForm, categoryId: query.categoryId ?? null })
   dialogVisible.value = true
 }
 
@@ -371,7 +360,10 @@ async function saveCategory() {
 async function removeCategory(data) {
   await deleteCategory(data.id)
   ElMessage.success('删除成功')
-  if (currentCategory.value?.id === data.id) clearCategory()
+  if (query.categoryId === data.id) {
+    query.categoryId = null
+    load(1)
+  }
   loadTree()
 }
 
@@ -408,6 +400,69 @@ onMounted(() => {
 }
 :deep(.frozen-mini:hover .el-link__inner) {
   color: #f56c6c;
+}
+
+/* 分类筛选 chip 栏（替代原左侧分类树） */
+.category-chips {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.chips-left {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.chips-right {
+  flex-shrink: 0;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 14px;
+  background: #f4f4f5;
+  color: #606266;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.18s;
+  border: 1px solid transparent;
+}
+.chip:hover {
+  background: #ecf5ff;
+  color: #409eff;
+}
+.chip.active {
+  background: #409eff;
+  color: #fff;
+  border-color: #409eff;
+  box-shadow: 0 2px 6px rgba(64, 158, 255, 0.25);
+}
+.chip em {
+  font-style: normal;
+  margin-left: 5px;
+  padding: 0 6px;
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 9px;
+  font-size: 11px;
+  min-width: 18px;
+  text-align: center;
+  line-height: 16px;
+}
+.chip.active em {
+  background: rgba(255, 255, 255, 0.28);
+  color: #fff;
+}
+.chip-add {
+  margin-left: 4px;
 }
 .location-text {
   color: #2e6bff;

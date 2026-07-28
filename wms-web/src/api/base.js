@@ -22,6 +22,7 @@ export const getLocationStock = (id) => request.get(`/base/location/${id}/stock`
 
 // ==================== 物料分类 ====================
 export const getCategoryTree = () => request.get('/base/material/category/tree')
+export const getCategoryCounts = () => request.get('/base/material/category/counts')
 export const addCategory = (data) => request.post('/base/material/category/add', data)
 export const updateCategory = (data) => request.put('/base/material/category/update', data)
 export const deleteCategory = (id) => request.delete(`/base/material/category/${id}`)
