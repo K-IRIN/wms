@@ -4,10 +4,14 @@ import com.wms.annotation.OperationLog;
 import com.wms.common.BizException;
 import com.wms.common.Result;
 import com.wms.entity.WmsArea;
+import com.wms.entity.WmsInventory;
 import com.wms.entity.WmsLocation;
+import com.wms.entity.WmsMaterial;
 import com.wms.entity.WmsWarehouse;
 import com.wms.service.WmsAreaService;
+import com.wms.service.WmsInventoryService;
 import com.wms.service.WmsLocationService;
+import com.wms.service.WmsMaterialService;
 import com.wms.service.WmsWarehouseService;
 import com.wms.vo.LocationTreeVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -22,6 +26,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -38,16 +44,22 @@ public class BasLocationController {
     private final WmsWarehouseService warehouseService;
     private final WmsAreaService areaService;
     private final WmsLocationService locationService;
+    private final WmsInventoryService inventoryService;
+    private final WmsMaterialService materialService;
 
-    @Operation(summary = "库区库位树（仓库→库区→库位）")
+    @Operation(summary = "库区库位树（仓库→库区→库位，库位节点带库存摘要）")
     @GetMapping("/tree")
     public Result<List<LocationTreeVO>> tree() {
         List<WmsWarehouse> warehouses = warehouseService.lambdaQuery().orderByAsc(WmsWarehouse::getId).list();
         List<WmsArea> areas = areaService.lambdaQuery().orderByAsc(WmsArea::getId).list();
         List<WmsLocation> locations = locationService.lambdaQuery().orderByAsc(WmsLocation::getId).list();
+        // 一次性把全部库存拉出来按库位分组，用于库位节点的库存摘要（种类数、总数量、是否有冻结）
+        List<WmsInventory> allInventory = inventoryService.list();
 
         Map<Long, List<WmsArea>> areaMap = areas.stream().collect(Collectors.groupingBy(WmsArea::getWarehouseId));
         Map<Long, List<WmsLocation>> locMap = locations.stream().collect(Collectors.groupingBy(WmsLocation::getAreaId));
+        Map<Long, List<WmsInventory>> invByLoc = allInventory.stream()
+                .collect(Collectors.groupingBy(WmsInventory::getLocationId));
 
         List<LocationTreeVO> tree = warehouses.stream().map(w -> {
             LocationTreeVO wNode = new LocationTreeVO();
@@ -75,6 +87,11 @@ public class BasLocationController {
                     lNode.setCapacity(l.getCapacity());
                     lNode.setGoodsType(l.getGoodsType());
                     lNode.setRemark(l.getRemark());
+                    // 库存摘要：物料种类数 / 总数量 / 是否有冻结
+                    List<WmsInventory> invs = invByLoc.getOrDefault(l.getId(), List.of());
+                    lNode.setStockSkuCount(invs.stream().map(WmsInventory::getMaterialId).distinct().toList().size());
+                    lNode.setStockTotalQty(invs.stream().mapToInt(WmsInventory::getQuantity).sum());
+                    lNode.setHasFrozen(invs.stream().anyMatch(i -> i.getFrozenQty() != null && i.getFrozenQty() > 0));
                     aNode.getChildren().add(lNode);
                 }
                 wNode.getChildren().add(aNode);
@@ -88,6 +105,70 @@ public class BasLocationController {
     @GetMapping("/all")
     public Result<List<WmsLocation>> all() {
         return Result.ok(locationService.lambdaQuery().orderByAsc(WmsLocation::getId).list());
+    }
+
+    @Operation(summary = "库位库存明细（库位信息 + 该库位所有物料库存 + 合计）")
+    @GetMapping("/{id}/stock")
+    public Result<Map<String, Object>> stock(@PathVariable Long id) {
+        WmsLocation loc = locationService.getById(id);
+        if (loc == null) {
+            throw new BizException("库位不存在");
+        }
+        WmsArea area = areaService.getById(loc.getAreaId());
+        String warehouseName = "";
+        String areaName = area == null ? "" : area.getAreaName();
+        if (area != null) {
+            WmsWarehouse w = warehouseService.getById(area.getWarehouseId());
+            warehouseName = w == null ? "" : w.getWarehouseName();
+        }
+        // 该库位所有库存记录
+        List<WmsInventory> invs = inventoryService.lambdaQuery()
+                .eq(WmsInventory::getLocationId, id)
+                .orderByDesc(WmsInventory::getUpdateTime)
+                .list();
+        // 批量拿物料信息
+        List<Long> materialIds = invs.stream().map(WmsInventory::getMaterialId).distinct().toList();
+        Map<Long, WmsMaterial> materialMap = materialIds.isEmpty()
+                ? Map.of()
+                : materialService.listByIds(materialIds).stream()
+                        .collect(Collectors.toMap(WmsMaterial::getId, m -> m));
+
+        List<Map<String, Object>> items = new ArrayList<>();
+        int totalQty = 0;
+        int totalFrozen = 0;
+        for (WmsInventory inv : invs) {
+            WmsMaterial m = materialMap.get(inv.getMaterialId());
+            Map<String, Object> row = new HashMap<>();
+            row.put("inventoryId", inv.getId());
+            row.put("materialId", inv.getMaterialId());
+            row.put("materialCode", m == null ? "" : m.getMaterialCode());
+            row.put("materialName", m == null ? "(已删除)" : m.getMaterialName());
+            row.put("spec", m == null ? "" : m.getSpec());
+            row.put("unit", m == null ? "" : m.getUnit());
+            row.put("quantity", inv.getQuantity());
+            int frozen = inv.getFrozenQty() == null ? 0 : inv.getFrozenQty();
+            row.put("frozenQty", frozen);
+            row.put("availableQty", inv.getQuantity() - frozen);
+            row.put("createTime", inv.getCreateTime());
+            row.put("updateTime", inv.getUpdateTime());
+            items.add(row);
+            totalQty += inv.getQuantity();
+            totalFrozen += frozen;
+        }
+        Map<String, Object> result = new HashMap<>();
+        result.put("locationId", loc.getId());
+        result.put("locationCode", loc.getLocationCode());
+        result.put("capacity", loc.getCapacity());
+        result.put("goodsType", loc.getGoodsType());
+        result.put("status", loc.getStatus());
+        result.put("areaName", areaName);
+        result.put("warehouseName", warehouseName);
+        result.put("items", items);
+        result.put("totalQty", totalQty);
+        result.put("totalFrozen", totalFrozen);
+        result.put("totalAvailable", totalQty - totalFrozen);
+        result.put("skuCount", items.size());
+        return Result.ok(result);
     }
 
     // ==================== 库区 ====================

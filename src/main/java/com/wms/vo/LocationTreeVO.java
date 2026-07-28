@@ -32,6 +32,12 @@ public class LocationTreeVO {
     private String goodsType;
     /** 备注 */
     private String remark;
+    /** 库位内物料种类数（库位节点用，0 表示空库位） */
+    private Integer stockSkuCount;
+    /** 库位内总库存数量（库位节点用） */
+    private Integer stockTotalQty;
+    /** 是否有冻结库存（库位节点用） */
+    private Boolean hasFrozen;
 
     private List<LocationTreeVO> children = new ArrayList<>();
 }

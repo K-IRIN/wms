@@ -17,6 +17,8 @@ export const deleteArea = (id) => request.delete(`/base/location/area/${id}`)
 export const addLocation = (data) => request.post('/base/location/add', data)
 export const updateLocation = (data) => request.put('/base/location/update', data)
 export const deleteLocation = (id) => request.delete(`/base/location/${id}`)
+// 库位库存明细（库位 → 物料列表 + 合计）
+export const getLocationStock = (id) => request.get(`/base/location/${id}/stock`)
 
 // ==================== 物料分类 ====================
 export const getCategoryTree = () => request.get('/base/material/category/tree')

@@ -24,6 +24,15 @@
                 <span class="meta">容量 {{ data.capacity ?? '—' }}</span>
                 <span class="meta">{{ data.goodsType || '不限类型' }}</span>
                 <el-tag :type="locStatusType(data.status)" size="small">{{ locStatusText(data.status) }}</el-tag>
+                <!-- 库存摘要：物料种类数 / 总数量；空库位显示"空"，冻结用红字标注 -->
+                <span
+                  v-if="(data.stockSkuCount || 0) > 0"
+                  class="stock-summary"
+                  :class="{ 'has-frozen': data.hasFrozen }"
+                >
+                  {{ data.stockSkuCount }} 种 / 共 {{ data.stockTotalQty }} 件<span v-if="data.hasFrozen" class="frozen-tip">（含冻结）</span>
+                </span>
+                <span v-else class="meta stock-empty">空库位</span>
               </template>
               <template v-else>
                 <el-tag :type="data.status === 1 ? 'success' : 'info'" size="small">
@@ -44,6 +53,7 @@
                 </el-popconfirm>
               </template>
               <template v-if="data.nodeType === 'location'">
+                <el-button link type="success" size="small" @click.stop="openStockDrawer(data)">库存</el-button>
                 <el-button link type="primary" size="small" @click.stop="openLocDialog(data)">编辑</el-button>
                 <el-popconfirm title="确定删除该库位？" @confirm="removeLocation(data)">
                   <template #reference>
@@ -117,6 +127,78 @@
         <el-button type="primary" :loading="saving" @click="saveLocation">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 库位库存抽屉（右侧滑出，显示该库位所有物料库存明细） -->
+    <el-drawer v-model="stockDrawerVisible" :title="stockDrawerTitle" direction="rtl" size="560px" destroy-on-close>
+      <div v-loading="stockLoading" class="stock-drawer">
+        <template v-if="stockData">
+          <!-- 库位信息卡片 -->
+          <el-descriptions :column="2" border size="small" class="loc-info">
+            <el-descriptions-item label="库位编号">{{ stockData.locationCode }}</el-descriptions-item>
+            <el-descriptions-item label="状态">
+              <el-tag :type="locStatusType(stockData.status)" size="small">{{ locStatusText(stockData.status) }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="所属库区">{{ stockData.areaName || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="所属仓库">{{ stockData.warehouseName || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="容量">{{ stockData.capacity ?? '—' }}</el-descriptions-item>
+            <el-descriptions-item label="存放类型">{{ stockData.goodsType || '不限' }}</el-descriptions-item>
+          </el-descriptions>
+
+          <!-- 合计行 -->
+          <div class="stock-totals">
+            <div class="total-item">
+              <div class="total-num">{{ stockData.skuCount }}</div>
+              <div class="total-label">物料种类</div>
+            </div>
+            <div class="total-item">
+              <div class="total-num">{{ stockData.totalQty }}</div>
+              <div class="total-label">总库存</div>
+            </div>
+            <div class="total-item">
+              <div class="total-num frozen">{{ stockData.totalFrozen }}</div>
+              <div class="total-label">冻结数</div>
+            </div>
+            <div class="total-item">
+              <div class="total-num primary">{{ stockData.totalAvailable }}</div>
+              <div class="total-label">可用数</div>
+            </div>
+          </div>
+
+          <!-- 库存明细表 -->
+          <el-table
+            v-if="stockData.items.length > 0"
+            :data="stockData.items"
+            border
+            size="small"
+            stripe
+            class="stock-table"
+          >
+            <el-table-column prop="materialCode" label="物料编号" width="100" />
+            <el-table-column prop="materialName" label="物料名称" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="spec" label="规格" width="90" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.spec || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="unit" label="单位" width="60" align="center">
+              <template #default="{ row }">{{ row.unit || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="quantity" label="数量" width="70" align="right" />
+            <el-table-column prop="frozenQty" label="冻结" width="60" align="right">
+              <template #default="{ row }">
+                <span :class="{ 'frozen-cell': row.frozenQty > 0 }">{{ row.frozenQty || 0 }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="availableQty" label="可用" width="70" align="right">
+              <template #default="{ row }">
+                <span class="avail-cell">{{ row.availableQty }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="updateTime" label="最近变动" width="150" />
+          </el-table>
+
+          <el-empty v-else description="该库位暂无库存" :image-size="80" />
+        </template>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -125,7 +207,8 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   getLocationTree, addArea, updateArea, deleteArea,
-  addLocation, updateLocation, deleteLocation
+  addLocation, updateLocation, deleteLocation,
+  getLocationStock
 } from '../../../api/base'
 
 const tree = ref([])
@@ -136,6 +219,12 @@ const areaDialogVisible = ref(false)
 const locDialogVisible = ref(false)
 const areaFormRef = ref()
 const locFormRef = ref()
+
+// 库存抽屉相关
+const stockDrawerVisible = ref(false)
+const stockDrawerTitle = ref('库位库存')
+const stockData = ref(null)
+const stockLoading = ref(false)
 
 const areaForm = reactive({ id: null, warehouseId: null, warehouseName: '', areaCode: '', areaName: '', status: 1, remark: '' })
 const locForm = reactive({ id: null, areaId: null, areaName: '', locationCode: '', capacity: null, goodsType: '', status: 0, remark: '' })
@@ -246,6 +335,20 @@ async function removeLocation(data) {
   load()
 }
 
+// 打开库位库存抽屉
+async function openStockDrawer(data) {
+  stockDrawerTitle.value = `库位 ${data.code} 库存`
+  stockData.value = null
+  stockDrawerVisible.value = true
+  stockLoading.value = true
+  try {
+    const res = await getLocationStock(data.id)
+    stockData.value = res.data
+  } finally {
+    stockLoading.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -277,5 +380,79 @@ onMounted(load)
 }
 .node-ops {
   margin-left: auto;
+}
+
+/* 库位节点上的库存摘要（蓝/红高亮） */
+.stock-summary {
+  color: #409eff;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 0 6px;
+  border-left: 1px solid #ebeef5;
+  margin-left: 2px;
+}
+.stock-summary.has-frozen {
+  color: #e6a23c;
+}
+.stock-summary .frozen-tip {
+  color: #f56c6c;
+  font-weight: normal;
+  font-size: 11px;
+  margin-left: 2px;
+}
+.stock-empty {
+  color: #c0c4cc !important;
+  font-style: italic;
+  border-left: 1px solid #ebeef5;
+  padding-left: 6px;
+  margin-left: 2px;
+}
+
+/* 库存抽屉 */
+.stock-drawer {
+  padding: 0 16px;
+}
+.loc-info {
+  margin-bottom: 14px;
+}
+.stock-totals {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.total-item {
+  flex: 1;
+  background: #f5f7fa;
+  border-radius: 6px;
+  padding: 10px 6px;
+  text-align: center;
+}
+.total-num {
+  font-size: 22px;
+  font-weight: 600;
+  color: #303133;
+  line-height: 1.2;
+}
+.total-num.frozen {
+  color: #f56c6c;
+}
+.total-num.primary {
+  color: #409eff;
+}
+.total-label {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
+}
+.stock-table {
+  margin-top: 4px;
+}
+.frozen-cell {
+  color: #f56c6c;
+  font-weight: 500;
+}
+.avail-cell {
+  color: #409eff;
+  font-weight: 500;
 }
 </style>
