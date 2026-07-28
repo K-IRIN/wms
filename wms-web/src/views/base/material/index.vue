@@ -71,9 +71,19 @@
             <el-table-column prop="unit" label="单位" width="58" />
             <el-table-column prop="purchasePrice" label="采购价" width="75" align="right" />
             <el-table-column prop="salePrice" label="销售价" width="75" align="right" />
-            <el-table-column prop="totalQty" label="库存总量" width="85" align="right">
+            <el-table-column prop="totalQty" label="库存总量" width="95" align="right">
               <template #default="{ row }">
-                <span :class="{ 'zero-stock': !row.totalQty }">{{ row.totalQty ?? 0 }}</span>
+                <div>
+                  <span :class="{ 'zero-stock': !row.totalQty }">{{ row.totalQty ?? 0 }}</span>
+                  <el-link
+                    v-if="(row.frozenQty || 0) > 0"
+                    type="warning"
+                    :underline="false"
+                    class="frozen-mini"
+                    title="该物料有冻结库存，点击跳转到库存流水"
+                    @click="goFrozenLogs(row)"
+                  >❄ {{ row.frozenQty }}</el-link>
+                </div>
               </template>
             </el-table-column>
             <el-table-column prop="locations" label="存放库位" min-width="150">
@@ -206,6 +216,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   pageMaterial, addMaterial, updateMaterial, deleteMaterial, updateMaterialStatus,
@@ -218,6 +229,12 @@ const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
 const categoryTree = ref([])
+const router = useRouter()
+
+// 点击冻结标识 → 跳到库存管理 → 变动流水（预选物料 + 类型=冻结）
+function goFrozenLogs(row) {
+  router.push({ path: '/inventory', query: { materialId: row.id, type: 'frozen' } })
+}
 const currentCategory = ref(null)
 
 const dialogVisible = ref(false)
@@ -379,6 +396,18 @@ onMounted(() => {
 }
 .zero-stock {
   color: #c0c4cc;
+}
+.frozen-mini {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+:deep(.frozen-mini .el-link__inner) {
+  color: #e6a23c;
+}
+:deep(.frozen-mini:hover .el-link__inner) {
+  color: #f56c6c;
 }
 .location-text {
   color: #2e6bff;

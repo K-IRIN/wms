@@ -182,9 +182,15 @@
               <template #default="{ row }">{{ row.unit || '—' }}</template>
             </el-table-column>
             <el-table-column prop="quantity" label="数量" width="70" align="right" />
-            <el-table-column prop="frozenQty" label="冻结" width="60" align="right">
+            <el-table-column prop="frozenQty" label="冻结" width="70" align="right">
               <template #default="{ row }">
-                <span :class="{ 'frozen-cell': row.frozenQty > 0 }">{{ row.frozenQty || 0 }}</span>
+                <el-link
+                  v-if="row.frozenQty > 0"
+                  type="warning"
+                  :underline="false"
+                  @click="openFreezeDetail(row)"
+                >{{ row.frozenQty }}</el-link>
+                <span v-else :class="{ 'frozen-cell': row.frozenQty > 0 }">0</span>
               </template>
             </el-table-column>
             <el-table-column prop="availableQty" label="可用" width="70" align="right">
@@ -199,6 +205,50 @@
         </template>
       </div>
     </el-drawer>
+
+    <!-- 冻结明细弹窗（按物料+库位看冻结/解冻流水） -->
+    <el-dialog v-model="freezeDetailVisible" :title="freezeDetailTitle" width="720px" destroy-on-close>
+      <div v-loading="freezeDetailLoading">
+        <el-alert
+          v-if="freezeDetailRow"
+          :title="`${freezeDetailRow.materialName}（${freezeDetailRow.materialCode}）@ ${stockData?.locationCode}`"
+          type="warning" :closable="false" show-icon style="margin-bottom: 12px"
+        >
+          <template #default>
+            <span>当前冻结 <b style="color: #f56c6c">{{ freezeDetailRow.frozenQty }}</b> 件；下表为该物料在本库位的冻结/解冻历史</span>
+          </template>
+        </el-alert>
+        <el-table
+          v-if="freezeDetailLogs.length > 0"
+          :data="freezeDetailLogs"
+          border size="small" stripe
+        >
+          <el-table-column prop="createTime" label="时间" width="160" />
+          <el-table-column label="类型" width="80" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.changeType === '冻结' ? 'warning' : 'success'" size="small">{{ row.changeType }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="数量" width="80" align="right">
+            <template #default="{ row }">
+              <span :class="row.changeQty > 0 ? 'freeze-up' : 'freeze-down'">
+                {{ row.changeQty > 0 ? '+' : '' }}{{ row.changeQty }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="beforeQty" label="冻结前" width="80" align="right" />
+          <el-table-column prop="afterQty" label="冻结后" width="80" align="right" />
+          <el-table-column prop="operator" label="操作人" width="100" />
+          <el-table-column prop="remark" label="原因" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span v-if="row.remark">{{ row.remark }}</span>
+              <span v-else style="color: #c0c4cc; font-style: italic">（历史数据，无原因）</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-else description="暂无冻结/解冻记录" :image-size="80" />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -210,6 +260,7 @@ import {
   addLocation, updateLocation, deleteLocation,
   getLocationStock
 } from '../../../api/base'
+import { getInventoryLogs } from '../../../api/inventory'
 
 const tree = ref([])
 const loading = ref(false)
@@ -225,6 +276,13 @@ const stockDrawerVisible = ref(false)
 const stockDrawerTitle = ref('库位库存')
 const stockData = ref(null)
 const stockLoading = ref(false)
+
+// 冻结明细弹窗相关
+const freezeDetailVisible = ref(false)
+const freezeDetailTitle = ref('冻结明细')
+const freezeDetailRow = ref(null)
+const freezeDetailLogs = ref([])
+const freezeDetailLoading = ref(false)
 
 const areaForm = reactive({ id: null, warehouseId: null, warehouseName: '', areaCode: '', areaName: '', status: 1, remark: '' })
 const locForm = reactive({ id: null, areaId: null, areaName: '', locationCode: '', capacity: null, goodsType: '', status: 0, remark: '' })
@@ -349,6 +407,32 @@ async function openStockDrawer(data) {
   }
 }
 
+// 打开冻结明细弹窗（某物料在某库位的所有冻结/解冻流水）
+async function openFreezeDetail(row) {
+  if (!stockData.value) return
+  freezeDetailTitle.value = `${row.materialName} 冻结明细`
+  freezeDetailRow.value = row
+  freezeDetailLogs.value = []
+  freezeDetailVisible.value = true
+  freezeDetailLoading.value = true
+  try {
+    const res = await getInventoryLogs({
+      materialId: row.materialId,
+      locationId: stockData.value.locationId,
+      changeType: '冻结'   // 接口用 IN 语义不友好，这里先拿冻结；解冻再单独取一次合并
+    })
+    // 再查一次解冻
+    const res2 = await getInventoryLogs({
+      materialId: row.materialId,
+      locationId: stockData.value.locationId,
+      changeType: '解冻'
+    })
+    freezeDetailLogs.value = [...res.data, ...res2.data].sort((a, b) => (a.id < b.id ? 1 : -1))
+  } finally {
+    freezeDetailLoading.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -453,6 +537,16 @@ onMounted(load)
 }
 .avail-cell {
   color: #409eff;
+  font-weight: 500;
+}
+
+/* 冻结明细弹窗 */
+.freeze-up {
+  color: #e6a23c;
+  font-weight: 500;
+}
+.freeze-down {
+  color: #67c23a;
   font-weight: 500;
 }
 </style>

@@ -169,7 +169,9 @@ public class BasMaterialController {
             BeanUtil.copyProperties(m, row);
             List<WmsInventory> invs = invByMaterial.getOrDefault(m.getId(), List.of());
             int totalQty = invs.stream().mapToInt(i -> i.getQuantity() == null ? 0 : i.getQuantity()).sum();
+            int frozenQty = invs.stream().mapToInt(i -> i.getFrozenQty() == null ? 0 : i.getFrozenQty()).sum();
             row.put("totalQty", totalQty);
+            row.put("frozenQty", frozenQty);
             // 存放库位，如 "A02-01-01(50) / A02-02-02(30)"；无库存显示 "-"
             String locations = invs.stream()
                     .filter(i -> i.getQuantity() != null && i.getQuantity() > 0)

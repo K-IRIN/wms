@@ -133,9 +133,10 @@ public class InventoryService {
 
     // ==================== 流水追溯 ====================
 
-    public List<Map<String, Object>> logs(Long materialId, String changeType, String orderNo) {
+    public List<Map<String, Object>> logs(Long materialId, Long locationId, String changeType, String orderNo) {
         List<WmsInventoryLog> logs = inventoryLogService.lambdaQuery()
                 .eq(materialId != null, WmsInventoryLog::getMaterialId, materialId)
+                .eq(locationId != null, WmsInventoryLog::getLocationId, locationId)
                 .eq(StrUtil.isNotBlank(changeType), WmsInventoryLog::getChangeType, changeType)
                 .like(StrUtil.isNotBlank(orderNo), WmsInventoryLog::getOrderNo, orderNo)
                 .orderByDesc(WmsInventoryLog::getId)
@@ -330,9 +331,12 @@ public class InventoryService {
     // ==================== 冻结/解冻 ====================
 
     @Transactional(rollbackFor = Exception.class)
-    public void freeze(Long inventoryId, Integer qty, boolean unfreeze) {
+    public void freeze(Long inventoryId, Integer qty, boolean unfreeze, String reason) {
         if (qty == null || qty <= 0) {
             throw new BizException("数量必须大于 0");
+        }
+        if (reason == null || reason.trim().isEmpty()) {
+            throw new BizException("请填写" + (unfreeze ? "解冻" : "冻结") + "原因");
         }
         WmsInventory inv = inventoryService.getById(inventoryId);
         if (inv == null) {
@@ -359,7 +363,7 @@ public class InventoryService {
         log.setBeforeQty(unfreeze ? inv.getFrozenQty() + qty : inv.getFrozenQty() - qty);
         log.setAfterQty(inv.getFrozenQty());
         log.setOperator(currentName());
-        log.setRemark("冻结数量变更");
+        log.setRemark(reason.trim());
         inventoryLogService.save(log);
     }
 

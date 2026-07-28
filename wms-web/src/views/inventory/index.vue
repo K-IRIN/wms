@@ -63,6 +63,12 @@
         <!-- ========== Tab2 变动流水 ========== -->
         <el-tab-pane label="变动流水" name="logs">
           <el-form :inline="true" @submit.prevent>
+            <el-form-item label="物料">
+              <el-select v-model="logQuery.materialId" placeholder="全部物料" clearable filterable style="width: 200px">
+                <el-option v-for="m in materials" :key="m.id" :value="m.id"
+                  :label="`${m.materialCode} ${m.materialName}`" />
+              </el-select>
+            </el-form-item>
             <el-form-item label="类型">
               <el-select v-model="logQuery.changeType" placeholder="全部" clearable style="width: 110px">
                 <el-option v-for="t in ['入库', '出库', '移库', '盘点', '冻结', '解冻']" :key="t" :label="t" :value="t" />
@@ -218,13 +224,21 @@
     </el-dialog>
 
     <!-- 冻结/解冻弹窗 -->
-    <el-dialog v-model="freezeVisible" :title="freezeForm.unfreeze ? '解冻库存' : '冻结库存'" width="380px" destroy-on-close>
-      <p style="margin-top: 0">
+    <el-dialog v-model="freezeVisible" :title="freezeForm.unfreeze ? '解冻库存' : '冻结库存'" width="420px" destroy-on-close>
+      <p style="margin-top: 0; color: #606266">
         {{ freezeRow?.materialName }} @ {{ freezeRow?.locationCode }}：
         {{ freezeForm.unfreeze ? `当前冻结 ${freezeRow?.frozenQty}` : `当前可用 ${freezeRow?.available}` }}
       </p>
-      <el-input-number v-model="freezeForm.qty" :min="1"
-        :max="freezeForm.unfreeze ? freezeRow?.frozenQty : freezeRow?.available" style="width: 100%" />
+      <el-form :model="freezeForm" label-width="80px" style="margin-top: 12px">
+        <el-form-item label="数量" required>
+          <el-input-number v-model="freezeForm.qty" :min="1"
+            :max="freezeForm.unfreeze ? freezeRow?.frozenQty : freezeRow?.available" style="width: 100%" />
+        </el-form-item>
+        <el-form-item :label="freezeForm.unfreeze ? '解冻原因' : '冻结原因'" required>
+          <el-input v-model="freezeForm.reason" type="textarea" :rows="2" maxlength="200" show-word-limit
+            :placeholder="freezeForm.unfreeze ? '如：客户已确认收货 / 库位调整完成' : '如：客户预订单预留 / 客诉待查 / 库位临时隔离'" />
+        </el-form-item>
+      </el-form>
       <template #footer>
         <el-button @click="freezeVisible = false">取消</el-button>
         <el-button type="primary" :loading="acting" @click="doFreeze">确定</el-button>
@@ -235,6 +249,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   getInventorySummary, getInventoryByLocation, getInventoryLogs,
@@ -267,7 +282,7 @@ async function loadStock() {
 }
 
 // ==================== 流水 ====================
-const logQuery = reactive({ changeType: null, orderNo: '' })
+const logQuery = reactive({ materialId: null, changeType: null, orderNo: '' })
 const logRows = ref([])
 const logLoading = ref(false)
 
@@ -365,20 +380,25 @@ async function loadWarnings() {
 // ==================== 冻结/解冻 ====================
 const freezeVisible = ref(false)
 const freezeRow = ref(null)
-const freezeForm = reactive({ qty: 1, unfreeze: false })
+const freezeForm = reactive({ qty: 1, unfreeze: false, reason: '' })
 
 function openFreeze(row, unfreeze) {
   freezeRow.value = row
   freezeForm.qty = 1
   freezeForm.unfreeze = unfreeze
+  freezeForm.reason = ''
   freezeVisible.value = true
 }
 
 async function doFreeze() {
+  if (!freezeForm.reason || !freezeForm.reason.trim()) {
+    ElMessage.warning('请填写' + (freezeForm.unfreeze ? '解冻' : '冻结') + '原因')
+    return
+  }
   acting.value = true
   try {
     const fn = freezeForm.unfreeze ? unfreezeInventory : freezeInventory
-    await fn({ inventoryId: freezeRow.value.inventoryId, qty: freezeForm.qty })
+    await fn({ inventoryId: freezeRow.value.inventoryId, qty: freezeForm.qty, reason: freezeForm.reason.trim() })
     ElMessage.success(freezeForm.unfreeze ? '解冻成功' : '冻结成功')
     freezeVisible.value = false
     loadStock()
@@ -399,6 +419,14 @@ onMounted(async () => {
   ])
   warehouses.value = w.data
   materials.value = m.data
+  // 读取 query 参数预填筛选（从物料列表的 ❄ 链接跳转过来）
+  const route = useRoute()
+  if (route.query.materialId) {
+    logQuery.materialId = Number(route.query.materialId)
+    logQuery.changeType = '冻结'
+    tab.value = 'logs'
+    loadLogs()
+  }
   const map = {}
   for (const wh of tree.data) {
     for (const a of wh.children || []) {

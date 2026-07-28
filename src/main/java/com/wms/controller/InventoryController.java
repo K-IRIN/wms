@@ -2,6 +2,7 @@ package com.wms.controller;
 
 import com.wms.annotation.OperationLog;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.wms.common.BizException;
 import com.wms.common.Result;
 import com.wms.entity.WmsMoveOrder;
 import com.wms.service.InventoryService;
@@ -49,9 +50,10 @@ public class InventoryController {
     @Operation(summary = "库存变动流水")
     @GetMapping("/logs")
     public Result<List<Map<String, Object>>> logs(@RequestParam(required = false) Long materialId,
+                                                  @RequestParam(required = false) Long locationId,
                                                   @RequestParam(required = false) String changeType,
                                                   @RequestParam(required = false) String orderNo) {
-        return Result.ok(inventoryService.logs(materialId, changeType, orderNo));
+        return Result.ok(inventoryService.logs(materialId, locationId, changeType, orderNo));
     }
 
     @Operation(summary = "移库（仓内/跨仓）")
@@ -89,7 +91,11 @@ public class InventoryController {
     public Result<Void> freeze(@RequestBody Map<String, Object> body) {
         Long inventoryId = Long.valueOf(body.get("inventoryId").toString());
         Integer qty = Integer.valueOf(body.get("qty").toString());
-        inventoryService.freeze(inventoryId, qty, false);
+        String reason = body.get("reason") == null ? null : body.get("reason").toString().trim();
+        if (reason == null || reason.isEmpty()) {
+            throw new BizException("请填写冻结原因");
+        }
+        inventoryService.freeze(inventoryId, qty, false, reason);
         return Result.ok();
     }
 
@@ -99,7 +105,11 @@ public class InventoryController {
     public Result<Void> unfreeze(@RequestBody Map<String, Object> body) {
         Long inventoryId = Long.valueOf(body.get("inventoryId").toString());
         Integer qty = Integer.valueOf(body.get("qty").toString());
-        inventoryService.freeze(inventoryId, qty, true);
+        String reason = body.get("reason") == null ? null : body.get("reason").toString().trim();
+        if (reason == null || reason.isEmpty()) {
+            throw new BizException("请填写解冻原因");
+        }
+        inventoryService.freeze(inventoryId, qty, true, reason);
         return Result.ok();
     }
 }
