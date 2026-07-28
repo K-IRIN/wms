@@ -207,7 +207,7 @@
         <el-form-item label="目标库位" required>
           <el-select v-model="moveForm.toLocationId" filterable style="width: 100%">
             <el-option v-for="l in freeLocations" :key="l.id" :value="l.id"
-              :label="`${l.locationCode}（${l.status === 0 ? '空闲' : '占用中'}）`" />
+              :label="`${l.code || l.locationCode}（${l.status === 0 ? '空闲' : '占用中'}）`" />
           </el-select>
         </el-form-item>
         <el-form-item label="移库数量" required>
