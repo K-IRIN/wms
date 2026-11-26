@@ -5,7 +5,8 @@ import { defineStore } from 'pinia'
 //  1. WebSocket 全局只连一次（布局挂载时 connect，退出登录时 disconnect），
 //     地图页/监控页共用这里的响应式数据，避免每个页面各建一条连接。
 //  2. 断线后 3 秒自动重连；无 token（未登录）时不连接也不重连。
-//  3. 消息格式：{ type: 'agv' | 'task' | 'alert', data: {...} }，由后端调度引擎广播。
+//  3. 消息格式：{ type: 'agv' | 'task' | 'alert' | 'waiting', data: {...} }，由后端调度引擎广播。
+//     其中 waiting 为阶段 4.6 的多车等待标识：{ agvId, waiting: true|false, since, reason }。
 
 let ws = null               // 当前 WebSocket 实例（非响应式，不放 state）
 let reconnectTimer = null   // 重连定时器
@@ -17,6 +18,7 @@ export const useAgvStore = defineStore('agv', {
     agvs: {},           // AGV 实时状态：id → 设备对象（坐标/电量/状态随 WS 更新）
     tasks: {},          // 任务实时状态：id → 任务对象
     alerts: [],         // 最近告警（新消息在前，最多保留 20 条）
+    waiting: {},        // 等待让行的 AGV：id → { since, reason }（阶段 4.6）
     lastMsgAt: ''       // 最近一次收到消息的时间（HH:mm:ss）
   }),
   getters: {
@@ -26,7 +28,9 @@ export const useAgvStore = defineStore('agv', {
     activeTasks: (s) => Object.values(s.tasks).filter((t) => t.status < 6),
     // 某台 AGV 当前正在执行的任务
     taskOfAgv: (s) => (agvId) =>
-      Object.values(s.tasks).find((t) => t.agvId === agvId && t.status < 6) || null
+      Object.values(s.tasks).find((t) => t.agvId === agvId && t.status < 6) || null,
+    // 某台 AGV 是否处于"等待让行"状态（阶段 4.6）
+    isWaiting: (s) => (agvId) => !!s.waiting[agvId]
   },
   actions: {
     /** 建立 WebSocket 连接（已连接或连接中则不重复连） */
@@ -91,6 +95,13 @@ export const useAgvStore = defineStore('agv', {
         this.alerts.unshift({ ...msg.data, _seq: Date.now() + Math.random() })
         if (this.alerts.length > 20) {
           this.alerts.length = 20
+        }
+      } else if (msg.type === 'waiting' && msg.data?.agvId != null) {
+        // 阶段 4.6：等待让行标识，地图据此画呼吸光圈 + "等待中"标签
+        if (msg.data.waiting) {
+          this.waiting[msg.data.agvId] = { since: msg.data.since, reason: msg.data.reason }
+        } else {
+          delete this.waiting[msg.data.agvId]
         }
       }
     },

@@ -1,0 +1,8 @@
+mysql: [Warning] Using a password on the command line interface can be insecure.
+n	first_t	last_t
+35	2026-11-26 15:56:04	2026-11-26 15:58:24
+mysql: [Warning] Using a password on the command line interface can be insecure.
+status	n
+5	1
+6	17
+7	51

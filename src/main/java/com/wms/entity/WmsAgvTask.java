@@ -64,6 +64,12 @@ public class WmsAgvTask implements Serializable {
     /** 卸货完成时刻 */
     private LocalDateTime dropDoneTime;
 
+    /** 空驶里程（格）：前往取货段的行驶格数，用于算空驶率（阶段 5.2） */
+    private Integer emptyDistance;
+
+    /** 载货里程（格）：载货行驶段的格数，用于算总里程（阶段 5.2） */
+    private Integer loadedDistance;
+
     /** 完成时间 */
     private LocalDateTime finishTime;
 

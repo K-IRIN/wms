@@ -32,8 +32,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -157,6 +159,13 @@ public class AgvTaskController {
         double faultRate = all.isEmpty() ? 0
                 : Math.min(100, Math.round(faultCount * 1000.0 / all.size()) / 10.0);
 
+        // 阶段 5.2：里程与空驶率（口径见计划文档附 D）
+        long emptySum = all.stream().mapToLong(t -> t.getEmptyDistance() == null ? 0L : t.getEmptyDistance()).sum();
+        long loadedSum = all.stream().mapToLong(t -> t.getLoadedDistance() == null ? 0L : t.getLoadedDistance()).sum();
+        long totalDist = emptySum + loadedSum;
+        double emptyRate = totalDist == 0 ? 0
+                : Math.round(emptySum * 1000.0 / totalDist) / 10.0;
+
         Map<String, Object> result = new HashMap<>();
         result.put("labels", labels);
         result.put("donePerDay", donePerDay);
@@ -172,6 +181,10 @@ public class AgvTaskController {
         result.put("faultRate", faultRate);
         result.put("conflictCount", conflictCount);
         result.put("chargeCount", chargeCount);
+        result.put("emptyDistance", emptySum);
+        result.put("loadedDistance", loadedSum);
+        result.put("totalDistance", totalDist);
+        result.put("emptyRate", emptyRate);
         return Result.ok(result);
     }
 
@@ -211,6 +224,153 @@ public class AgvTaskController {
         taskService.updateById(task);
         engine.writeTaskLog(task, "优先级调整",
                 "任务「" + task.getTaskNo() + "」优先级调整为" + (priority == 1 ? "紧急" : "普通"));
+        return Result.ok();
+    }
+
+    @Operation(summary = "8 态任务转换表（阶段 4.5）")
+    @GetMapping("/transitions")
+    public Result<List<Map<String, Object>>> transitions() {
+        return Result.ok(engine.transitionTable());
+    }
+
+    @Operation(summary = "批量建单（阶段 5.1 实验台）：一次创建多个同类型同起终点任务")
+    @OperationLog("批量创建AGV任务")
+    @RequireRole({"ADMIN", "DISPATCHER"})
+    @PostMapping("/batch")
+    public Result<List<String>> batchCreate(@RequestBody Map<String, Object> body) {
+        try {
+            int count = body.get("count") == null ? 10 : Integer.parseInt(String.valueOf(body.get("count")));
+            String taskType = body.get("taskType") == null ? null : String.valueOf(body.get("taskType"));
+            Long fromId = body.get("fromLocationId") == null ? null
+                    : Long.valueOf(String.valueOf(body.get("fromLocationId")));
+            Long toId = body.get("toLocationId") == null ? null
+                    : Long.valueOf(String.valueOf(body.get("toLocationId")));
+            Integer priority = body.get("priority") == null ? 0
+                    : Integer.valueOf(String.valueOf(body.get("priority")));
+            return Result.ok(engine.batchCreateTasks(count, taskType, fromId, toId, priority));
+        } catch (IllegalStateException e) {
+            throw new BizException(e.getMessage());
+        }
+    }
+
+    @Operation(summary = "一键重置实验台（阶段 5.1）：清空任务与日志，车辆回待命位满电")
+    @OperationLog("重置AGV实验台")
+    @RequireRole({"ADMIN"})
+    @PostMapping("/reset")
+    public Result<Map<String, Object>> reset(@RequestBody(required = false) Map<String, Object> body) {
+        Integer agvCount = body == null || body.get("agvCount") == null ? null
+                : Integer.valueOf(String.valueOf(body.get("agvCount")));
+        String strategy = body == null || body.get("strategy") == null ? null
+                : String.valueOf(body.get("strategy"));
+        try {
+            return Result.ok(engine.resetSimulator(agvCount, strategy));
+        } catch (IllegalStateException e) {
+            throw new BizException(e.getMessage());
+        }
+    }
+
+    @Operation(summary = "对比实验指标汇总（阶段 5.4：完成率/平均完成时间/空驶率/冲突次数/负载均衡）")
+    @GetMapping("/experiment")
+    public Result<Map<String, Object>> experiment() {
+        List<WmsAgvTask> all = taskService.list();
+        long total = all.size();
+        long done = all.stream().filter(t -> t.getStatus() == AgvEngineService.TASK_DONE).count();
+
+        // 平均完成时间（秒）：已完成任务 开始执行 → 完成
+        double avgSec = all.stream()
+                .filter(t -> t.getStatus() == AgvEngineService.TASK_DONE
+                        && t.getStartTime() != null && t.getFinishTime() != null)
+                .mapToLong(t -> Duration.between(t.getStartTime(), t.getFinishTime()).getSeconds())
+                .average().orElse(0);
+
+        // 里程与空驶率
+        long emptySum = all.stream().mapToLong(t -> t.getEmptyDistance() == null ? 0L : t.getEmptyDistance()).sum();
+        long loadedSum = all.stream().mapToLong(t -> t.getLoadedDistance() == null ? 0L : t.getLoadedDistance()).sum();
+        long totalDist = emptySum + loadedSum;
+        double emptyRate = totalDist == 0 ? 0 : Math.round(emptySum * 1000.0 / totalDist) / 10.0;
+
+        // 冲突与等待事件（来自 wms_agv_log，不新增表）
+        long conflictCount = logService.lambdaQuery().eq(WmsAgvLog::getLogType, "冲突").count();
+        long waitCount = logService.lambdaQuery().eq(WmsAgvLog::getLogType, "冲突").count();
+
+        // 各车负载分布 + 均衡度（标准差越小越均衡）
+        Map<Long, Long> loadByAgv = new HashMap<>();
+        for (WmsAgvTask t : all) {
+            if (t.getStatus() == AgvEngineService.TASK_DONE && t.getAgvId() != null) {
+                loadByAgv.merge(t.getAgvId(), 1L, Long::sum);
+            }
+        }
+        Map<String, Object> agvLoad = new LinkedHashMap<>();
+        double sum = 0;
+        double sumSq = 0;
+        for (Map.Entry<Long, Long> e : loadByAgv.entrySet()) {
+            WmsAgvDevice d = deviceService.getById(e.getKey());
+            agvLoad.put(d == null ? ("AGV#" + e.getKey()) : d.getAgvCode(), e.getValue());
+            sum += e.getValue();
+            sumSq += (double) e.getValue() * e.getValue();
+        }
+        int n = loadByAgv.size();
+        double mean = n == 0 ? 0 : sum / n;
+        double variance = n == 0 ? 0 : sumSq / n - mean * mean;
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("strategy", engine.getStrategy());
+        result.put("strategyLabel", AgvEngineService.strategyLabel(engine.getStrategy()));
+        result.put("agvCount", deviceService.lambdaQuery().eq(WmsAgvDevice::getEnabled, 1).count());
+        result.put("totalTask", total);
+        result.put("doneTask", done);
+        result.put("completionRate", total == 0 ? 0 : Math.round(done * 1000.0 / total) / 10.0);
+        result.put("avgDurationSec", Math.round(avgSec * 10) / 10.0);
+        result.put("emptyRate", emptyRate);
+        result.put("totalDistance", totalDist);
+        result.put("conflictCount", conflictCount);
+        result.put("waitCount", waitCount);
+        result.put("agvLoad", agvLoad);
+        result.put("loadStdDev", Math.round(Math.sqrt(Math.max(0, variance)) * 100) / 100.0);
+        result.put("utilization", com.wms.common.AgvStats.utilization(all,
+                deviceService.lambdaQuery().eq(WmsAgvDevice::getEnabled, 1).count(),
+                LocalDateTime.now()));
+        return Result.ok(result);
+    }
+
+    @Operation(summary = "查询当前分配策略（阶段 5.3 对比实验）")
+    @GetMapping("/strategy")
+    public Result<Map<String, Object>> strategy() {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("code", engine.getStrategy());
+        map.put("label", AgvEngineService.strategyLabel(engine.getStrategy()));
+        map.put("options", List.of(
+                Map.of("code", AgvEngineService.STRATEGY_NEAREST, "label", "就近分配"),
+                Map.of("code", AgvEngineService.STRATEGY_NEAREST_LOAD, "label", "就近+负载惩罚")));
+        return Result.ok(map);
+    }
+
+    @Operation(summary = "切换分配策略（阶段 5.3 对比实验：nearest / nearest-load）")
+    @OperationLog("切换AGV调度策略")
+    @RequireRole({"ADMIN"})
+    @PutMapping("/strategy/{code}")
+    public Result<Map<String, Object>> setStrategy(@PathVariable String code) {
+        try {
+            engine.setStrategy(code);
+        } catch (IllegalStateException e) {
+            throw new BizException(e.getMessage());
+        }
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("code", engine.getStrategy());
+        map.put("label", AgvEngineService.strategyLabel(engine.getStrategy()));
+        return Result.ok(map);
+    }
+
+    @Operation(summary = "管理员手动流转任务状态；非法流转返回明确错误（阶段 4.5）")
+    @OperationLog("手动流转AGV任务状态")
+    @RequireRole({"ADMIN"})
+    @PutMapping("/transition/{id}/{status}")
+    public Result<Void> transition(@PathVariable Long id, @PathVariable Integer status) {
+        try {
+            engine.forceTransition(id, status);
+        } catch (IllegalStateException e) {
+            throw new BizException(e.getMessage());
+        }
         return Result.ok();
     }
 

@@ -395,12 +395,13 @@ CREATE TABLE sys_operation_log (
 -- 初始化数据
 -- ============================================================
 
--- 4 个角色
+-- 5 个角色（调度员 DISPATCHER 为 v1.1 新增，负责 AGV 搬运任务建单与队列调度）
 INSERT INTO sys_role (id, role_code, role_name, description) VALUES
 (1, 'ADMIN',    '管理员',     '拥有系统全部操作权限'),
 (2, 'MANAGER',  '仓管员',     '管理库位、执行盘点、审核单据'),
 (3, 'OPERATOR', '普通操作员', '仅可进行出入库操作、查看库存'),
-(4, 'GUEST',    '访客',       '只读权限');
+(4, 'GUEST',    '访客',       '只读权限'),
+(6, 'DISPATCHER','调度员',    '负责 AGV 搬运任务建单、待分配队列调度、地图与监控查看');
 
 -- 管理员账号：admin / 123456（BCrypt 加密存储，登录模块上线后请立即修改）
 INSERT INTO sys_user (id, username, password, nickname, real_name, dept, phone, status) VALUES
@@ -430,8 +431,8 @@ INSERT INTO sys_menu (id, parent_id, menu_name, menu_type, path, icon, perms, so
 (16, 14, '角色管理',   'C', '/system/role',     'Key',           'sys:role:list',      2),
 (17, 14, '菜单管理',   'C', '/system/menu',     'Operation',     'sys:menu:list',      3);
 
--- 管理员角色拥有全部菜单
-INSERT INTO sys_role_menu (role_id, menu_id) SELECT 1, id FROM sys_menu;
+-- 注：管理员的"拥有全部菜单"授权写在文件末尾的 v1.1 段落（那里才有完整的 24 条菜单），
+-- 这里先不插，否则会与末尾的 INSERT 撞唯一键 uk_role_menu。
 
 -- 示例仓库 → 库区 → 库位
 INSERT INTO wms_warehouse (id, warehouse_code, warehouse_name, address, warehouse_type, manager, phone) VALUES
@@ -441,10 +442,7 @@ INSERT INTO wms_area (id, warehouse_id, area_code, area_name) VALUES
 (1, 1, 'A01', '收货区'),
 (2, 1, 'A02', '存储区');
 
-INSERT INTO wms_location (id, area_id, location_code, capacity, goods_type) VALUES
-(1, 2, 'A02-01-01', 1000, '通用'),
-(2, 2, 'A02-01-02', 1000, '通用'),
-(3, 2, 'A02-02-01', 500,  '电子元件');
+-- 存储库位在文件末尾的 v1.1 段落统一插入（双通道布局 24 个货架格 + 2 个月台），此处不再预置
 
 -- 物料分类与测试物料
 INSERT INTO wms_material_category (id, parent_id, category_name, sort) VALUES
@@ -485,10 +483,8 @@ ALTER TABLE wms_location
     ADD COLUMN pos_x INT DEFAULT NULL COMMENT '地图X坐标（列）' AFTER remark,
     ADD COLUMN pos_y INT DEFAULT NULL COMMENT '地图Y坐标（行）' AFTER pos_x;
 
--- 按库位编码自动填充坐标，如 A02-01-03 → pos_x=3, pos_y=1
-UPDATE wms_location
-SET pos_y = CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(location_code, '-', 2), '-', -1) AS UNSIGNED),
-    pos_x = CAST(SUBSTRING_INDEX(location_code, '-', -1) AS UNSIGNED);
+-- 注：坐标不再靠"编号回填"批量 UPDATE——v1.1 的库位在文件末尾按双通道布局显式写入 pos_x/pos_y，
+-- 避免"手工坐标被编号覆盖"的老问题（见 BasLocationController.parsePosFromCode）。
 
 -- 【E1.1】AGV 设备档案表
 CREATE TABLE wms_agv_device (
@@ -525,6 +521,12 @@ CREATE TABLE wms_agv_task (
     agv_id           BIGINT       DEFAULT NULL COMMENT '执行AGV的ID',
     error_msg        VARCHAR(500) DEFAULT NULL COMMENT '异常信息',
     start_time       DATETIME     DEFAULT NULL COMMENT '开始执行时间',
+    pick_time        DATETIME     DEFAULT NULL COMMENT '到达取货点时刻（阶段2.4 任务时间线）',
+    pick_done_time   DATETIME     DEFAULT NULL COMMENT '取货完成时刻（阶段2.4 任务时间线）',
+    drop_time        DATETIME     DEFAULT NULL COMMENT '到达卸货点时刻（阶段2.4 任务时间线）',
+    drop_done_time   DATETIME     DEFAULT NULL COMMENT '卸货完成时刻（阶段2.4 任务时间线）',
+    empty_distance   INT          NOT NULL DEFAULT 0 COMMENT '空驶里程（格，前往取货段，阶段5.2）',
+    loaded_distance  INT          NOT NULL DEFAULT 0 COMMENT '载货里程（格，载货行驶段，阶段5.2）',
     finish_time      DATETIME     DEFAULT NULL COMMENT '完成时间',
     create_time      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -548,39 +550,107 @@ CREATE TABLE wms_agv_log (
     KEY idx_task_id (task_id)
 ) ENGINE = InnoDB COMMENT = 'AGV运行日志表';
 
--- 【E1.3】设备运维员角色
+-- ============================================================
+-- v1.1：双通道仓库布局 + 八台 AGV + 六角色菜单矩阵
+-- 网格约定：x=列(0..7)  y=行(0..7)
+--   x ∈ {0,7}      纵向主通道（双通道），贯通 y=0..7
+--   y ∈ {0,1,3,6}  横向通道：y=0 月台行 / y=1 待命区 / y=3,y=6 作业横通道
+--   其余格          货架行 y ∈ {2,4,5,7}，x ∈ {1..6}，共 24 个存储库位
+-- ============================================================
+
+-- 设备运维员角色
 INSERT INTO sys_role (id, role_code, role_name, description) VALUES
 (5, 'MAINTENANCE', '设备运维员', '负责 AGV 设备监控、异常注入与处理');
 
--- 【E1.5】设备监控菜单（AGV 设备档案页）
-INSERT INTO sys_menu (id, parent_id, menu_name, menu_type, path, icon, sort) VALUES
-(19, 0,  '设备监控',     'M', '/agv',        'Monitor', 11),
-(20, 19, 'AGV 设备档案', 'C', '/agv/device', 'Van',     1);
+-- 设备监控目录 + 四个子页面（v1.1 补齐 perms，前端才能做按钮级权限）
+INSERT INTO sys_menu (id, parent_id, menu_name, menu_type, path, icon, perms, sort) VALUES
+(19, 0,  '设备监控',     'M', '/agv',        'Monitor',     NULL,                 11),
+(20, 19, 'AGV 设备档案', 'C', '/agv/device', 'Van',         'agv:device:list',   1),
+(21, 19, '仓库地图',     'C', '/agv/map',     'MapLocation', 'agv:map:view',      2),
+(22, 19, '运行监控',     'C', '/agv/monitor', 'DataLine',    'agv:monitor:view',  3),
+(23, 19, '搬运任务',     'C', '/agv/task',    'List',        'agv:task:list',     4),
+(24, 19, '待分配队列',   'C', '/agv/queue',   'Sort',        'agv:queue:list',    5);
 
--- 菜单授权：管理员 + 设备运维员
-INSERT INTO sys_role_menu (role_id, menu_id) VALUES
-(1, 19), (1, 20),
-(5, 19), (5, 20);
-
--- 示例 AGV 设备（待命区在 x=0 一列）
+-- 八台 AGV：停放在双通道待命位，坐标与网格对齐
 INSERT INTO wms_agv_device (agv_code, agv_name, max_load, speed, battery, status, enabled, pos_x, pos_y, home_x, home_y, remark) VALUES
-('AGV-01', '搬运一号', 500.00, 1.00, 100, 0, 1, 0, 0, 0, 0, '主力搬运车'),
-('AGV-02', '搬运二号', 500.00, 1.00, 85,  0, 1, 0, 1, 0, 1, NULL),
-('AGV-03', '搬运三号', 800.00, 0.80, 60,  2, 1, 0, 2, 0, 2, '重载型，充电中');
+('AGV-01', '搬运一号', 500.00, 1.00, 100, 0, 1, 0, 1, 0, 1, '西通道待命位'),
+('AGV-02', '搬运二号', 500.00, 1.00, 90,  0, 1, 0, 2, 0, 2, '西通道待命位'),
+('AGV-03', '搬运三号', 800.00, 0.80, 85,  0, 1, 7, 1, 7, 1, '东通道待命位·低速车'),
+('AGV-04', '搬运四号', 800.00, 1.00, 100, 0, 1, 7, 2, 7, 2, '东通道待命位'),
+('AGV-05', '搬运五号', 600.00, 1.00, 95,  0, 1, 0, 6, 0, 6, '西通道待命位'),
+('AGV-06', '搬运六号', 600.00, 1.00, 100, 0, 1, 0, 4, 0, 4, '西通道待命位'),
+('AGV-07', '搬运七号', 600.00, 1.00, 100, 0, 1, 7, 3, 7, 3, '东通道待命位'),
+('AGV-08', '搬运八号', 600.00, 0.80, 100, 0, 1, 7, 6, 7, 6, '东通道待命位·低速车');
 
--- 【E2】AGV 虚拟月台库位：入库搬运的起点 / 出库搬运的终点（位于收货区 A01，坐标 (0,0)）
+-- 两个虚拟月台：西侧收货月台 (0,0)、东侧发货月台 (7,0)
 INSERT INTO wms_location (area_id, location_code, capacity, goods_type, status, remark, pos_x, pos_y) VALUES
-(1, 'A01-DOCK', NULL, 'AGV虚拟月台', 0, 'AGV 装卸货月台（虚拟库位，请勿上架真实物料）', 0, 0);
+(1, 'A01-DOCK',     NULL, 'AGV虚拟月台', 0, 'AGV 装卸货月台（西侧，收货）', 0, 0),
+(1, 'A01-DOCK-OUT', NULL, 'AGV虚拟月台', 0, 'AGV 装卸货月台（东侧，发货）', 7, 0);
+
+-- 24 个存储库位：编号规则 A02-{行号y}-{列号x}，与 BasLocationController.parsePosFromCode 一致
+INSERT INTO wms_location (area_id, location_code, capacity, goods_type, status, remark, pos_x, pos_y) VALUES
+(2, 'A02-02-01', 1000, '通用',     0, '货架行A-01', 1, 2),
+(2, 'A02-02-02', 1000, '通用',     0, '货架行A-02', 2, 2),
+(2, 'A02-02-03',  800, '电子元件', 0, '货架行A-03', 3, 2),
+(2, 'A02-02-04',  800, '电子元件', 0, '货架行A-04', 4, 2),
+(2, 'A02-02-05',  500, '原料',     0, '货架行A-05', 5, 2),
+(2, 'A02-02-06',  500, '原料',     0, '货架行A-06', 6, 2),
+(2, 'A02-04-01', 1000, '通用',     0, '货架行B-01', 1, 4),
+(2, 'A02-04-02', 1000, '通用',     0, '货架行B-02', 2, 4),
+(2, 'A02-04-03',  800, '电子元件', 0, '货架行B-03', 3, 4),
+(2, 'A02-04-04',  800, '电子元件', 0, '货架行B-04', 4, 4),
+(2, 'A02-04-05',  500, '原料',     0, '货架行B-05', 5, 4),
+(2, 'A02-04-06',  500, '原料',     0, '货架行B-06', 6, 4),
+(2, 'A02-05-01',  600, '半成品',   0, '货架行C-01', 1, 5),
+(2, 'A02-05-02',  600, '半成品',   0, '货架行C-02', 2, 5),
+(2, 'A02-05-03',  600, '半成品',   0, '货架行C-03', 3, 5),
+(2, 'A02-05-04',  400, '成品',     0, '货架行C-04', 4, 5),
+(2, 'A02-05-05',  400, '成品',     0, '货架行C-05', 5, 5),
+(2, 'A02-05-06',  400, '成品',     0, '货架行C-06', 6, 5),
+(2, 'A02-07-01',  300, '成品',     0, '货架行D-01', 1, 7),
+(2, 'A02-07-02',  300, '成品',     0, '货架行D-02', 2, 7),
+(2, 'A02-07-03',  300, '成品',     0, '货架行D-03', 3, 7),
+(2, 'A02-07-04',  300, '成品',     0, '货架行D-04', 4, 7),
+(2, 'A02-07-05',  300, '成品',     0, '货架行D-05', 5, 7),
+(2, 'A02-07-06',  300, '成品',     0, '货架行D-06', 6, 7);
 
 -- ============================================================
--- 【二期 E3】AGV 仓库地图可视化 + 设备监控大屏
--- 在 E1 的"设备监控"目录（id=19）下新增两个页面菜单
+-- v1.1：六角色菜单授权矩阵
+-- 菜单ID：1 数据看板 / 2 基础资料 / 3 仓库 / 4 物料 / 5 供应商 / 6 客户
+--         7 采购入库 / 8 销售出库 / 9 库存 / 10 条码 / 11 盘点 / 12 单据 / 13 操作日志
+--         14 系统管理 / 15 用户 / 16 角色 / 17 菜单 / 18 库区库位
+--         19 设备监控(目录) / 20 设备档案 / 21 仓库地图 / 22 运行监控
+--         23 搬运任务 / 24 待分配队列
 -- ============================================================
-INSERT INTO sys_menu (id, parent_id, menu_name, menu_type, path, icon, sort) VALUES
-(21, 19, '仓库地图', 'C', '/agv/map',     'MapLocation', 2),
-(22, 19, '运行监控', 'C', '/agv/monitor', 'DataLine',    3);
-
--- 菜单授权：管理员 + 设备运维员
+-- 管理员：全部菜单
+INSERT INTO sys_role_menu (role_id, menu_id) SELECT 1, id FROM sys_menu;
+-- 仓管员：基础资料 + 全部单据 + 库存 + 日志 + 地图/监控
 INSERT INTO sys_role_menu (role_id, menu_id) VALUES
-(1, 21), (1, 22),
-(5, 21), (5, 22);
+(2, 1),(2, 2),(2, 3),(2, 18),(2, 4),(2, 5),(2, 6),
+(2, 7),(2, 8),(2, 9),(2, 10),(2, 11),(2, 12),(2, 13),
+(2, 19),(2, 21),(2, 22);
+-- 普通操作员：仅出入库 + 库存 + 条码
+INSERT INTO sys_role_menu (role_id, menu_id) VALUES
+(3, 7),(3, 8),(3, 9),(3, 10);
+-- 访客：数据看板 + 仓库地图 + 运行监控（只读）
+INSERT INTO sys_role_menu (role_id, menu_id) VALUES
+(4, 1),(4, 19),(4, 21),(4, 22);
+-- 设备运维员：设备档案 + 地图 + 监控 + 数据看板
+INSERT INTO sys_role_menu (role_id, menu_id) VALUES
+(5, 1),(5, 19),(5, 20),(5, 21),(5, 22);
+-- 调度员：搬运任务 + 待分配队列 + 地图 + 监控
+INSERT INTO sys_role_menu (role_id, menu_id) VALUES
+(6, 19),(6, 21),(6, 22),(6, 23),(6, 24);
+
+-- ============================================================
+-- v1.1：演示账号（六个角色各一个，口令统一 123456）
+-- ============================================================
+INSERT INTO sys_user (id, username, password, nickname, real_name, dept, phone, status) VALUES
+(2, 'manager',    '$2b$12$MOW0do4DqzK3Q0pftJr0qubHaLMDMV46rXuq9Y2SYYO6gNHMw//h.', '仓管员',     '王仓管', '仓储部',   '13800000002', 1),
+(3, 'operator',   '$2b$12$MOW0do4DqzK3Q0pftJr0qubHaLMDMV46rXuq9Y2SYYO6gNHMw//h.', '普通操作员', '李操作', '仓储部',   '13800000003', 1),
+(4, 'guest',      '$2b$12$MOW0do4DqzK3Q0pftJr0qubHaLMDMV46rXuq9Y2SYYO6gNHMw//h.', '访客',       '陈访客', '外部',     '13800000004', 1),
+(5, 'maintainer', '$2b$12$MOW0do4DqzK3Q0pftJr0qubHaLMDMV46rXuq9Y2SYYO6gNHMw//h.', '设备运维员', '刘运维', '设备部',   '13800000005', 1),
+(6, 'dispatcher', '$2b$12$MOW0do4DqzK3Q0pftJr0qubHaLMDMV46rXuq9Y2SYYO6gNHMw//h.', '调度员',     '孙调度', '调度中心', '13800000006', 1);
+
+INSERT INTO sys_user_role (user_id, role_id) VALUES
+(2, 2),(3, 3),(4, 4),(5, 5),(6, 6);

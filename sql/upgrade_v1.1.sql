@@ -178,7 +178,10 @@ WHERE agv_code = 'AGV-03';
 INSERT INTO wms_agv_device (agv_code, agv_name, max_load, speed, battery, status, enabled, pos_x, pos_y, home_x, home_y, remark)
 VALUES
   ('AGV-04', '搬运四号', 800.00, 1.00, 100, 0, 1, 7, 2, 7, 2, '东通道待命位'),
-  ('AGV-05', '搬运五号', 600.00, 1.00, 95,  0, 1, 0, 6, 0, 6, '西通道待命位')
+  ('AGV-05', '搬运五号', 600.00, 1.00, 95,  0, 1, 0, 6, 0, 6, '西通道待命位'),
+  ('AGV-06', '搬运六号', 600.00, 1.00, 100, 0, 1, 0, 4, 0, 4, '西通道待命位'),
+  ('AGV-07', '搬运七号', 600.00, 1.00, 100, 0, 1, 7, 3, 7, 3, '东通道待命位'),
+  ('AGV-08', '搬运八号', 600.00, 0.80, 100, 0, 1, 7, 6, 7, 6, '东通道待命位·低速车')
 ON DUPLICATE KEY UPDATE agv_name = VALUES(agv_name), max_load = VALUES(max_load), speed = VALUES(speed),
     battery = VALUES(battery), status = 0, enabled = 1,
     pos_x = VALUES(pos_x), pos_y = VALUES(pos_y), home_x = VALUES(home_x), home_y = VALUES(home_y),

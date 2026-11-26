@@ -69,9 +69,9 @@
               fill="rgba(142,162,201,0.06)" stroke="rgba(142,162,201,0.35)" stroke-width="1" stroke-dasharray="3 4" />
           </g>
 
-          <!-- AGV 小车：CSS transition 平滑补间移动 -->
+          <!-- AGV 小车：CSS transition 平滑补间移动；等待让行时加呼吸光圈 + 标签（阶段 4.6） -->
           <g v-for="agv in agvList" :key="'agv' + agv.id" class="agv-node"
-            :class="{ selected: selected?.id === agv.id, fault: agv.status === 3 }"
+            :class="{ selected: selected?.id === agv.id, fault: agv.status === 3, waiting: isWaiting(agv.id) }"
             :style="{ transform: `translate(${centerX(agv.posX)}px, ${centerY(agv.posY)}px)` }"
             @click="selected = agv">
             <circle r="19" :fill="agvColor(agv)" opacity="0.18" class="agv-halo" />
@@ -79,6 +79,11 @@
               :stroke-width="selected?.id === agv.id ? 2 : 1" class="agv-dot" />
             <text y="3.5" class="agv-no">{{ agv.agvCode.replace('AGV-', '') }}</text>
             <text :y="cell / 2 + 11" class="agv-code">{{ agv.agvCode }}</text>
+            <g v-if="isWaiting(agv.id)" class="waiting-badge">
+              <rect :x="-21" :y="cell / 2 + 15" width="42" height="14" rx="7"
+                fill="rgba(230,162,60,0.16)" stroke="rgba(230,162,60,0.65)" stroke-width="0.8" />
+              <text :y="cell / 2 + 25" class="agv-waiting-text">等待中</text>
+            </g>
           </g>
         </svg>
 
@@ -99,6 +104,10 @@
             <div class="detail-row"><span class="k">当前坐标</span><span>({{ selected.posX }}, {{ selected.posY }})</span></div>
             <div class="detail-row"><span class="k">待命区</span><span>({{ selected.homeX }}, {{ selected.homeY }})</span></div>
             <div class="detail-row"><span class="k">速度</span><span>{{ selected.speed }} 格/秒</span></div>
+            <div class="detail-row" v-if="isWaiting(selected.id)">
+              <span class="k">等待原因</span>
+              <span class="wait-reason">{{ waitingOf(selected.id)?.reason || '等待让行' }}</span>
+            </div>
             <div class="detail-task">
               <span class="k">当前任务</span>
               <template v-if="selectedTask">
@@ -126,6 +135,7 @@
         <span class="legend-item"><i style="background:#4f8dff"></i>运行中</span>
         <span class="legend-item"><i style="background:#e6a23c"></i>充电中</span>
         <span class="legend-item"><i style="background:#f56c6c"></i>故障</span>
+        <span class="legend-item"><i class="wait-dot"></i>等待让行</span>
       </div>
     </div>
   </div>
@@ -155,6 +165,9 @@ const statusMap = {
   3: { text: '故障', type: 'danger' }
 }
 const agvList = computed(() => agvStore.agvList)
+// 阶段 4.6：等待让行状态（WS waiting 消息维护）
+const isWaiting = (id) => agvStore.isWaiting(id)
+const waitingOf = (id) => agvStore.waiting[id]
 
 // ==================== 画布几何计算 ====================
 const cell = computed(() => cellSize.value)
@@ -383,6 +396,35 @@ onMounted(async () => {
 
 @keyframes faultPulse {
   50% { opacity: 0.05; }
+}
+
+/* 等待让行：橙色呼吸光圈 + "等待中"标签（阶段 4.6） */
+.agv-node.waiting .agv-halo {
+  fill: #e6a23c;
+  animation: waitPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes waitPulse {
+  0%, 100% { r: 19; opacity: 0.16; }
+  50% { r: 27; opacity: 0.45; }
+}
+
+.agv-waiting-text {
+  font-size: 9.5px;
+  font-weight: 700;
+  fill: #f0c578;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.wait-reason {
+  color: #f0c578;
+  font-size: 12px;
+}
+
+.legend-item .wait-dot {
+  background: #e6a23c;
+  box-shadow: 0 0 6px rgba(230, 162, 60, 0.9);
 }
 
 .agv-no {
