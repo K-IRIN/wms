@@ -19,7 +19,7 @@
    ## 验收
    - 命令/结果/证据文件
    ```
-5. **推送**：`git push origin master:main`（远端 `https://github.com/K-IRIN/wms.git`）。
+5. **推送**：`git push origin master:main`（`origin` = `ssh://git@ssh.github.com:443/K-IRIN/wms.git`，见〈环境〉；HTTPS 在本机取不到凭据）。
 6. **核对并记录**：`git ls-remote origin main` 的 SHA 必须等于本地 `git rev-parse HEAD`；在计划文档〈阶段交付记录〉表追加一行。**推送失败必须如实告知用户，不得宣称已交付。**
 
 > 没有验收证据的「完成」不算完成；没有推送到 GitHub 的「交付」不算交付。
@@ -32,6 +32,7 @@
 - 启动后端：`.\tools\run-backend.ps1`（日志 `logs/backend.out.log`，其中会打印图形验证码答案，供自动登录）。
 - 启动前端：`npm --prefix wms-web run dev`（默认 5173，代理 `/api` → 8080）。
 - 接口调试：`python tools/api.py login admin 123456` → `python tools/api.py get /agv/device/list`（token 存 `.tmp/token`）。
+- 推送 GitHub：`origin` 已配成 `ssh://git@ssh.github.com:443/K-IRIN/wms.git`（HTTPS 在本机取不到凭据、443 SSH 稳定）；仓库内已配 `core.sshCommand` 指向 `.tmp/ssh2/id_ed25519`（`.tmp/` 被 gitignore，不入库）。直接 `git push origin master:main` 即可。
 
 ## 代码地图
 
