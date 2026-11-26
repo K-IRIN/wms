@@ -104,19 +104,19 @@
 
     <!-- AGV 搬运统计（v2.0 E3.4） -->
     <el-row :gutter="12" style="margin-top: 12px">
-      <el-col :span="10">
+      <el-col :span="8">
         <el-card shadow="never">
           <div class="chart-header"><span class="chart-title">AGV 任务完成量（近14天）</span></div>
           <div ref="agvDoneChartRef" class="chart" style="height: 260px"></div>
         </el-card>
       </el-col>
-      <el-col :span="7">
+      <el-col :span="5">
         <el-card shadow="never">
           <div class="chart-header"><span class="chart-title">AGV 任务类型占比</span></div>
           <div ref="agvTypeChartRef" class="chart" style="height: 260px"></div>
         </el-card>
       </el-col>
-      <el-col :span="7">
+      <el-col :span="5">
         <el-card shadow="never">
           <div class="chart-header"><span class="chart-title">AGV 运行质量</span></div>
           <div class="agv-quality">
@@ -137,6 +137,12 @@
               <div class="q-title">累计完成任务</div>
             </div>
           </div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card shadow="never">
+          <div class="chart-header"><span class="chart-title">设备利用率（近24h）</span></div>
+          <div ref="agvUtilChartRef" class="chart" style="height: 260px"></div>
         </el-card>
       </el-col>
     </el-row>
@@ -225,11 +231,13 @@ const pieChartRef = ref(null)
 const accuracyChartRef = ref(null)
 const agvDoneChartRef = ref(null)
 const agvTypeChartRef = ref(null)
+const agvUtilChartRef = ref(null)
 let trendChart = null
 let pieChart = null
 let accuracyChart = null
 let agvDoneChart = null
 let agvTypeChart = null
+let agvUtilChart = null
 // AGV 运行质量统计（E3.4）
 const agvStat = ref({})
 
@@ -351,6 +359,23 @@ async function loadAgvStat() {
       data: res.data.typeRatio, label: { formatter: '{b}\n{d}%' }
     }]
   }, true)
+  // 设备利用率环形图（近24h，口径见 AgvStats.utilization）
+  agvUtilChart?.setOption({
+    series: [{
+      type: 'gauge', startAngle: 210, endAngle: -30, min: 0, max: 100, radius: '92%',
+      axisLine: { lineStyle: { width: 14, color: [[1, '#eef1f6']] } },
+      progress: { show: true, width: 14, roundCap: true, itemStyle: { color: '#2e6bff' } },
+      pointer: { show: false }, axisTick: { show: false },
+      splitLine: { show: false }, axisLabel: { show: false },
+      anchor: { show: false },
+      detail: {
+        valueAnimation: true, offsetCenter: [0, '12%'], fontSize: 28,
+        formatter: '{value}%', color: '#1f2d3d'
+      },
+      title: { offsetCenter: [0, '46%'], fontSize: 12, color: '#909399' },
+      data: [{ value: Number(res.data.utilization ?? 0), name: '设备利用率' }]
+    }]
+  }, true)
 }
 
 async function doExport() {
@@ -370,6 +395,7 @@ function handleResize() {
   accuracyChart?.resize()
   agvDoneChart?.resize()
   agvTypeChart?.resize()
+  agvUtilChart?.resize()
 }
 
 onMounted(() => {
@@ -378,6 +404,7 @@ onMounted(() => {
   accuracyChart = echarts.init(accuracyChartRef.value)
   agvDoneChart = echarts.init(agvDoneChartRef.value)
   agvTypeChart = echarts.init(agvTypeChartRef.value)
+  agvUtilChart = echarts.init(agvUtilChartRef.value)
   loadSummary()
   loadTrend()
   loadRatio()
@@ -396,6 +423,7 @@ onBeforeUnmount(() => {
   accuracyChart?.dispose()
   agvDoneChart?.dispose()
   agvTypeChart?.dispose()
+  agvUtilChart?.dispose()
 })
 </script>
 

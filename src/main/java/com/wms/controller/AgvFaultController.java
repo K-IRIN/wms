@@ -46,6 +46,14 @@ public class AgvFaultController {
         return Result.ok();
     }
 
+    @Operation(summary = "模拟行驶耗电（只改电量，验证在途电量兜底）")
+    @OperationLog("模拟AGV耗电")
+    @PutMapping("/drain/{agvId}/{battery}")
+    public Result<Void> drain(@PathVariable Long agvId, @PathVariable Integer battery) {
+        engine.drainBattery(agvId, battery);
+        return Result.ok();
+    }
+
     @Operation(summary = "故障修复")
     @OperationLog("修复AGV故障")
     @PutMapping("/repair/{agvId}")

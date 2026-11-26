@@ -155,6 +155,34 @@ public class DashboardController {
                             r.get("outboundQty"), r.get("checkCount"), r.get("docCount")))
                     .collect(java.util.stream.Collectors.toList());
             writer.write(staffRows, s4);
+
+            // 页签6：AGV 调度（阶段 3.4：利用率/完成量/每车完成量/近7天趋势）
+            Map<String, Object> agv = dashboardService.agvStats();
+            WriteSheet s5 = EasyExcel.writerSheet(5, "AGV调度").head(List.of(
+                    List.of("指标"), List.of("数值"))).build();
+            List<List<Object>> agvRows = new java.util.ArrayList<>();
+            agvRows.add(List.of("启用 AGV（台）", agv.get("enabledAgv")));
+            agvRows.add(List.of("设备利用率(%)", agv.get("utilization")));
+            agvRows.add(List.of("任务完成率(%)", agv.get("completionRate")));
+            agvRows.add(List.of("故障率(%)", agv.get("faultRate")));
+            agvRows.add(List.of("累计完成任务", agv.get("totalDone")));
+            agvRows.add(List.of("任务总数", agv.get("totalTask")));
+            agvRows.add(List.of("平均任务耗时(秒)", agv.get("avgDurationSec")));
+            agvRows.add(List.of("充电次数", agv.get("chargeCount")));
+            agvRows.add(List.of("冲突次数", agv.get("conflictCount")));
+            agvRows.add(List.of("", ""));
+            agvRows.add(List.of("车辆", "完成量"));
+            for (Map<String, Object> r : (List<Map<String, Object>>) agv.get("byAgv")) {
+                agvRows.add(List.of(r.get("agvCode"), r.get("done")));
+            }
+            agvRows.add(List.of("", ""));
+            agvRows.add(List.of("日期", "完成量"));
+            List<?> agvLabels = (List<?>) agv.get("labels");
+            List<?> agvDaily = (List<?>) agv.get("dailyDone");
+            for (int i = 0; i < agvLabels.size(); i++) {
+                agvRows.add(List.of(agvLabels.get(i), agvDaily.get(i)));
+            }
+            writer.write(agvRows, s5);
         }
     }
 }

@@ -1,5 +1,9 @@
 package com.wms.service;
 
+import com.wms.common.AgvStats;
+import com.wms.entity.WmsAgvDevice;
+import com.wms.entity.WmsAgvLog;
+import com.wms.entity.WmsAgvTask;
 import com.wms.entity.WmsCheckItem;
 import com.wms.entity.WmsCheckOrder;
 import com.wms.entity.WmsInboundOrder;
@@ -44,6 +48,76 @@ public class DashboardService {
     private final WmsCheckItemService checkItemService;
     private final WmsWarehouseService warehouseService;
     private final InventoryService inventoryServiceBiz;
+    private final WmsAgvTaskService agvTaskService;
+    private final WmsAgvDeviceService agvDeviceService;
+    private final WmsAgvLogService agvLogService;
+
+    /**
+     * AGV 调度统计（阶段 3.4：看板 AGV 页签与 Excel AGV 页签共用）
+     * <p>利用率口径与 {@code AgvTaskController.stat()} 一致，统一走 {@code AgvStats.utilization}。</p>
+     */
+    public Map<String, Object> agvStats() {
+        List<WmsAgvTask> tasks = agvTaskService.list();
+        List<WmsAgvDevice> devices = agvDeviceService.list();
+        long enabled = devices.stream().filter(d -> d.getEnabled() != null && d.getEnabled() == 1).count();
+        LocalDateTime now = LocalDateTime.now();
+
+        long totalTask = tasks.size();
+        long totalDone = tasks.stream().filter(t -> t.getStatus() != null && t.getStatus() == 6).count();
+        double completionRate = totalTask == 0 ? 0 : Math.round(totalDone * 1000.0 / totalTask) / 10.0;
+        long faultCount = agvLogService.lambdaQuery().eq(WmsAgvLog::getLogType, "故障").count();
+        double faultRate = totalTask == 0 ? 0 : Math.min(100, Math.round(faultCount * 1000.0 / totalTask) / 10.0);
+        double avgSec = tasks.stream()
+                .filter(t -> t.getStatus() != null && t.getStatus() == 6
+                        && t.getStartTime() != null && t.getFinishTime() != null)
+                .mapToLong(t -> java.time.Duration.between(t.getStartTime(), t.getFinishTime()).getSeconds())
+                .average().orElse(0);
+
+        // 每台车完成量（看板柱状图 / 导出）
+        Map<Long, String> codeOf = devices.stream()
+                .filter(d -> d.getId() != null)
+                .collect(Collectors.toMap(WmsAgvDevice::getId, WmsAgvDevice::getAgvCode, (a, b) -> a));
+        List<Map<String, Object>> byAgv = tasks.stream()
+                .filter(t -> t.getStatus() != null && t.getStatus() == 6 && t.getAgvId() != null)
+                .collect(Collectors.groupingBy(WmsAgvTask::getAgvId, Collectors.counting()))
+                .entrySet().stream()
+                .map(e -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("agvCode", codeOf.getOrDefault(e.getKey(), "AGV-" + e.getKey()));
+                    item.put("done", e.getValue());
+                    return item;
+                })
+                .sorted(Comparator.comparing(m -> String.valueOf(m.get("agvCode"))))
+                .collect(Collectors.toList());
+
+        // 近 7 天完成量
+        Map<String, Long> doneByDay = tasks.stream()
+                .filter(t -> t.getStatus() != null && t.getStatus() == 6 && t.getFinishTime() != null)
+                .collect(Collectors.groupingBy(t -> t.getFinishTime().toLocalDate().toString(), Collectors.counting()));
+        List<String> labels = new ArrayList<>();
+        List<Long> dailyDone = new ArrayList<>();
+        LocalDate today = LocalDate.now();
+        for (int i = 6; i >= 0; i--) {
+            String day = today.minusDays(i).toString();
+            labels.add(day.substring(5));
+            dailyDone.add(doneByDay.getOrDefault(day, 0L));
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("enabledAgv", enabled);
+        result.put("utilization", AgvStats.utilization(tasks, enabled, now));
+        result.put("completionRate", completionRate);
+        result.put("faultRate", faultRate);
+        result.put("totalDone", totalDone);
+        result.put("totalTask", totalTask);
+        result.put("avgDurationSec", Math.round(avgSec));
+        result.put("conflictCount", agvLogService.lambdaQuery().eq(WmsAgvLog::getLogType, "冲突").count());
+        result.put("chargeCount", agvLogService.lambdaQuery().eq(WmsAgvLog::getLogType, "充电").count());
+        result.put("byAgv", byAgv);
+        result.put("labels", labels);
+        result.put("dailyDone", dailyDone);
+        return result;
+    }
 
     // ==================== 12.1 顶部统计卡片 + 出入库趋势 ====================
 

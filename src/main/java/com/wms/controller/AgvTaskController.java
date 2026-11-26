@@ -145,6 +145,18 @@ public class AgvTaskController {
 
         long totalDone = all.stream().filter(t -> t.getStatus() == AgvEngineService.TASK_DONE).count();
 
+        // 阶段 3.3：设备利用率 / 故障率 / 完成率 / 冲突数 / 充电次数
+        long enabledAgvs = deviceService.lambdaQuery().eq(WmsAgvDevice::getEnabled, 1).count();
+        long chargeCount = logService.lambdaQuery().eq(WmsAgvLog::getLogType, "充电").count();
+        long conflictCount = logService.lambdaQuery().eq(WmsAgvLog::getLogType, "冲突").count();
+
+        // 利用率口径统一在 AgvStats，看板/导出复用同一实现
+        double utilization = com.wms.common.AgvStats.utilization(all, enabledAgvs, java.time.LocalDateTime.now());
+        double completionRate = all.isEmpty() ? 0
+                : Math.round(totalDone * 1000.0 / all.size()) / 10.0;
+        double faultRate = all.isEmpty() ? 0
+                : Math.min(100, Math.round(faultCount * 1000.0 / all.size()) / 10.0);
+
         Map<String, Object> result = new HashMap<>();
         result.put("labels", labels);
         result.put("donePerDay", donePerDay);
@@ -154,6 +166,12 @@ public class AgvTaskController {
         result.put("avgDurationSec", Math.round(avgSec * 10) / 10.0);
         result.put("totalDone", totalDone);
         result.put("totalTask", all.size());
+        result.put("enabledAgv", enabledAgvs);
+        result.put("utilization", utilization);
+        result.put("completionRate", completionRate);
+        result.put("faultRate", faultRate);
+        result.put("conflictCount", conflictCount);
+        result.put("chargeCount", chargeCount);
         return Result.ok(result);
     }
 

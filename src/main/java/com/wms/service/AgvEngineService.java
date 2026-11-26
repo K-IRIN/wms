@@ -174,6 +174,12 @@ public class AgvEngineService {
             if (blockTicks.getOrDefault(agv.getId(), 0) > 0) {
                 continue;
             }
+            // 在途电量兜底：跌破阈值就让任务回队列、车辆回充，禁止 0% 继续跑（阶段 3.2）
+            if (agv.getBattery() != null && agv.getBattery() <= AUTO_CHARGE_BATTERY) {
+                recycleTask(task, agv, "在途电量低于 " + AUTO_CHARGE_BATTERY
+                        + "%，任务已回收等待改派，车辆回充");
+                continue;
+            }
             switch (task.getStatus()) {
                 case TASK_TO_PICK -> {
                     int[] from = resolvePos(task.getFromLocationId());
@@ -251,6 +257,10 @@ public class AgvEngineService {
     private boolean moveToward(WmsAgvDevice agv, int tx, int ty) {
         if (agv.getPosX() == tx && agv.getPosY() == ty) {
             return true;
+        }
+        // 电量归零禁行：不再移动，等待回收/充电（阶段 3.2）
+        if (agv.getBattery() == null || agv.getBattery() <= 0) {
+            return false;
         }
         double speed = agv.getSpeed() == null ? 1.0 : agv.getSpeed().doubleValue();
         double acc = moveAcc.getOrDefault(agv.getId(), 0.0) + speed;
@@ -368,6 +378,10 @@ public class AgvEngineService {
         }
         freeAgv(task.getAgvId());
         task.setStatus(TASK_CANCELED);
+        if (task.getFinishTime() == null) {
+            // 取消也是任务终点，补结束时间，供利用率/时长统计使用
+            task.setFinishTime(LocalDateTime.now());
+        }
         task.setErrorMsg(reason);
         taskService.updateById(task);
         writeLog(task.getAgvId(), task.getId(), "状态变更",
@@ -412,6 +426,26 @@ public class AgvEngineService {
         }
     }
 
+    /**
+     * 回收任务：在途任务退回待分配队列（保留 priority，紧急任务自然插队），
+     * AGV 释放为空闲（低电时下一周期由 autoChargeTick 转入充电）。
+     */
+    private void recycleTask(WmsAgvTask task, WmsAgvDevice agv, String reason) {
+        task.setStatus(TASK_PENDING);
+        task.setAgvId(null);
+        task.setErrorMsg(reason);
+        taskService.updateById(task);
+        waitTicks.remove(task.getId());
+        moveAcc.remove(agv.getId());
+        agv.setStatus(AGV_IDLE);
+        deviceService.updateById(agv);
+        writeLog(agv.getId(), task.getId(), "告警",
+                agv.getAgvCode() + " " + reason + "，任务「" + task.getTaskNo() + "」退回待分配（优先级 "
+                        + task.getPriority() + " 保留）");
+        pushTask(task);
+        pushAgv(agv);
+    }
+
     // ==================== 异常模拟与自动重分配 ====================
 
     /** 注入：故障停机。其执行中的任务自动回收为待分配，由其他空闲 AGV 接手 */
@@ -440,13 +474,49 @@ public class AgvEngineService {
         pushAgv(agv);
     }
 
-    /** 注入：电量不足（降到 8%，触发低电保护逻辑） */
+    /** 注入：电量不足（降到 8%）：告警 + 任务回收 + 车辆转入回充，由其他空闲 AGV 接手 */
     public void injectLowBattery(Long agvId) {
         WmsAgvDevice agv = mustExist(agvId);
         agv.setBattery(8);
+        // 回收该 AGV 未完成的任务 → 退回待分配队列，priority 保持不变
+        List<WmsAgvTask> tasks = taskService.lambdaQuery()
+                .eq(WmsAgvTask::getAgvId, agvId)
+                .between(WmsAgvTask::getStatus, TASK_TO_PICK, TASK_RETURNING)
+                .list();
+        for (WmsAgvTask task : tasks) {
+            task.setStatus(TASK_PENDING);
+            task.setAgvId(null);
+            task.setErrorMsg("AGV 电量不足（8%），任务已回收等待重新分配");
+            taskService.updateById(task);
+            waitTicks.remove(task.getId());
+            writeLog(agvId, task.getId(), "告警",
+                    agv.getAgvCode() + " 电量不足（8%），任务「" + task.getTaskNo() + "」已回收，等待改派");
+            pushTask(task);
+        }
+        moveAcc.remove(agvId);
+        if (agv.getStatus() == AGV_RUNNING) {
+            agv.setStatus(AGV_IDLE);
+        }
         deviceService.updateById(agv);
-        writeLog(agvId, null, "告警", agv.getAgvCode() + " 电量不足告警（8%）");
-        pushAlert("warn", agv.getAgvCode() + " 电量不足，请及时充电");
+        writeLog(agvId, null, "告警", agv.getAgvCode() + " 电量不足告警（8%），停止接单并回充");
+        pushAlert("warn", agv.getAgvCode() + " 电量不足，任务已回队列，车辆回充");
+        pushAgv(agv);
+    }
+
+    /** 模拟行驶耗电：只改电量，不回收任务；在途车辆由 tick 的电量兜底逻辑决定回收/充电 */
+    public void drainBattery(Long agvId, int battery) {
+        WmsAgvDevice agv = mustExist(agvId);
+        int target = Math.max(0, Math.min(100, battery));
+        agv.setBattery(target);
+        if (agv.getStatus() == AGV_IDLE && target <= AUTO_CHARGE_BATTERY) {
+            // 空闲且低电：直接进入充电，避免下一 tick 才生效
+            agv.setStatus(AGV_CHARGING);
+            writeLog(agvId, null, "充电", agv.getAgvCode() + " 低电自动开始充电（模拟耗电至 " + target + "%）");
+        } else {
+            writeLog(agvId, null, "状态变更",
+                    agv.getAgvCode() + " 电量模拟耗至 " + target + "%（用于验证在途兜底）");
+        }
+        deviceService.updateById(agv);
         pushAgv(agv);
     }
 
