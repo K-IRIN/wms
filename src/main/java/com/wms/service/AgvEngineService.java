@@ -178,24 +178,28 @@ public class AgvEngineService {
                 case TASK_TO_PICK -> {
                     int[] from = resolvePos(task.getFromLocationId());
                     if (moveToward(agv, from[0], from[1])) {
+                        task.setPickTime(LocalDateTime.now());
                         changeTaskStatus(task, TASK_PICKING, "到达取货点，开始取货");
                         waitTicks.put(task.getId(), LOAD_UNLOAD_TICKS);
                     }
                 }
                 case TASK_PICKING -> {
                     if (countDown(task.getId())) {
+                        task.setPickDoneTime(LocalDateTime.now());
                         changeTaskStatus(task, TASK_TO_DROP, "取货完成，前往卸货点");
                     }
                 }
                 case TASK_TO_DROP -> {
                     int[] to = resolvePos(task.getToLocationId());
                     if (moveToward(agv, to[0], to[1])) {
+                        task.setDropTime(LocalDateTime.now());
                         changeTaskStatus(task, TASK_DROPPING, "到达卸货点，开始卸货");
                         waitTicks.put(task.getId(), LOAD_UNLOAD_TICKS);
                     }
                 }
                 case TASK_DROPPING -> {
                     if (countDown(task.getId())) {
+                        task.setDropDoneTime(LocalDateTime.now());
                         changeTaskStatus(task, TASK_RETURNING, "卸货完成，返回待命区");
                     }
                 }
