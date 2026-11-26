@@ -1,0 +1,262 @@
+/* ==================== WMS 智能仓储 · 全局科技风主题 ==================== */
+/* 设计基调：深色侧边导航 + 科技蓝主色 + 微渐变点缀（专业、克制、不浮夸） */
+
+:root {
+  /* 品牌主色：科技蓝 */
+  --wms-primary: #2e6bff;
+  --wms-primary-deep: #1f56d8;
+  --wms-primary-light: #5b8cff;
+  --wms-primary-gradient: linear-gradient(135deg, #2e6bff 0%, #4f7fff 100%);
+  /* 侧边导航（深藏青渐变） */
+  --wms-aside-bg: linear-gradient(180deg, #0c1e3e 0%, #10264f 55%, #133058 100%);
+  --wms-aside-text: #8ea2c9;
+  --wms-aside-active-bg: linear-gradient(90deg, rgba(46, 107, 255, 0.28), rgba(46, 107, 255, 0.08));
+  /* 内容区 */
+  --wms-content-bg: #f2f5fb;
+  --wms-card-radius: 10px;
+  --wms-card-shadow: 0 1px 2px rgba(16, 42, 97, 0.04), 0 4px 16px rgba(16, 42, 97, 0.06);
+  --wms-card-shadow-hover: 0 4px 8px rgba(16, 42, 97, 0.06), 0 10px 28px rgba(16, 42, 97, 0.1);
+  /* 文字 */
+  --wms-text-main: #1f2d4d;
+  --wms-text-sub: #6b7a99;
+
+  /* Element Plus 主题色覆盖（按钮/链接/分页/选中等全部跟随） */
+  --el-color-primary: #2e6bff;
+  --el-color-primary-light-3: #5b8cff;
+  --el-color-primary-light-5: #8aabff;
+  --el-color-primary-light-7: #b9ccff;
+  --el-color-primary-light-8: #d2dfff;
+  --el-color-primary-light-9: #eaf0ff;
+  --el-color-primary-dark-2: #1f56d8;
+  --el-border-radius-base: 6px;
+  --el-font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: var(--el-font-family);
+  color: var(--wms-text-main);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ==================== 卡片 ==================== */
+.el-card {
+  border-radius: var(--wms-card-radius);
+  border: none;
+  box-shadow: var(--wms-card-shadow);
+  transition: box-shadow 0.25s ease;
+}
+.el-card__header {
+  border-bottom: 1px solid #eef2f9;
+  font-weight: 600;
+}
+
+/* ==================== 表格 ==================== */
+.el-table {
+  --el-table-header-bg-color: #f5f8fc;
+  --el-table-header-text-color: #5b6b8c;
+  --el-table-border-color: #edf1f8;
+  --el-table-row-hover-bg-color: #f6f9ff;
+  font-size: 13px;
+}
+.el-table th.el-table__cell {
+  font-weight: 600;
+  height: 46px;
+}
+.el-table .el-table__cell {
+  padding: 10px 0;
+}
+.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background: #fafcff;
+}
+
+/* ==================== 按钮 ==================== */
+.el-button--primary {
+  background: var(--wms-primary-gradient);
+  border: none;
+  box-shadow: 0 2px 8px rgba(46, 107, 255, 0.3);
+}
+.el-button--primary:hover {
+  background: var(--wms-primary-deep);
+  box-shadow: 0 4px 12px rgba(46, 107, 255, 0.4);
+}
+.el-button--primary:active {
+  background: var(--wms-primary-deep);
+}
+.el-button--primary.is-link,
+.el-button--primary.is-text {
+  background: none;
+  box-shadow: none;
+  color: var(--wms-primary);
+}
+
+/* ==================== 弹窗 / 抽屉 ==================== */
+.el-dialog {
+  border-radius: 12px;
+  overflow: hidden;
+}
+.el-dialog__header {
+  background: linear-gradient(180deg, #f8faff, #fff);
+  margin-right: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid #eef2f9;
+}
+.el-dialog__title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.el-drawer__header {
+  margin-bottom: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid #eef2f9;
+  color: var(--wms-text-main);
+  font-weight: 600;
+}
+
+/* ==================== 表单 ==================== */
+.el-form-item__label {
+  color: var(--wms-text-sub);
+}
+.el-input__wrapper,
+.el-select__wrapper {
+  border-radius: 6px;
+}
+
+/* ==================== 标签 ==================== */
+.el-tag {
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+/* ==================== 分页 ==================== */
+.el-pagination {
+  --el-pagination-button-bg-color: #fff;
+  --el-pagination-hover-color: var(--wms-primary);
+}
+
+/* ==================== 页签 ==================== */
+.el-tabs__item {
+  color: var(--wms-text-sub);
+}
+.el-tabs__item.is-active {
+  color: var(--wms-primary);
+  font-weight: 600;
+}
+.el-tabs__active-bar {
+  background: var(--wms-primary-gradient);
+  height: 3px;
+  border-radius: 2px;
+}
+
+/* ==================== 滚动条 ==================== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #c8d3e8;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a8b8d8;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ==================== 通用页面容器 ==================== */
+.page {
+  padding: 14px;
+}
+
+/* ==================== 移动端响应式（≤767px） ==================== */
+@media (max-width: 767px) {
+  /* --- 页面容器 --- */
+  .page {
+    padding: 8px;
+  }
+
+  /* --- 表格：横向滚动，不撑破屏幕 --- */
+  .el-table {
+    font-size: 12px;
+  }
+  /* 确保表格外层可横向滚动（Element Plus 默认会处理，这里兜底） */
+  .el-table__body-wrapper {
+    overflow-x: auto;
+  }
+
+  /* --- 栅格：手机端全部竖向堆叠 --- */
+  .el-row {
+    flex-wrap: wrap;
+  }
+  .el-col {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* --- 弹窗 / 抽屉：撑满屏幕 --- */
+  .el-dialog {
+    width: 94% !important;
+    margin: 4vh auto !important;
+  }
+  .el-dialog__body {
+    padding: 12px;
+  }
+  .el-drawer {
+    width: 90% !important;
+  }
+
+  /* --- 表单：标签在上，输入框在下 --- */
+  .el-form-item {
+    display: block;
+  }
+  .el-form-item__label {
+    width: 100% !important;
+    text-align: left !important;
+    padding-bottom: 2px;
+  }
+  .el-form-item__content {
+    margin-left: 0 !important;
+  }
+
+  /* --- 分页组件：居中换行 --- */
+  .el-pagination {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+  }
+  .el-pagination .el-pagination__sizes,
+  .el-pagination .el-pagination__jump {
+    margin-top: 6px;
+  }
+
+  /* --- 卡片间距收紧 --- */
+  .el-card {
+    margin-bottom: 8px;
+  }
+  .el-card__body {
+    padding: 10px;
+  }
+
+  /* --- 按钮组：防止溢出 --- */
+  .el-button + .el-button {
+    margin-left: 4px;
+  }
+
+  /* --- 统计数字适当缩小 --- */
+  .stat-num {
+    font-size: 18px !important;
+  }
+  .stat-title {
+    font-size: 12px;
+  }
+
+  /* --- 隐藏大屏专属元素（可手动加 .hidden-xs） --- */
+  .hidden-xs {
+    display: none !important;
+  }
+}

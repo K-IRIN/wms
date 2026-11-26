@@ -1,0 +1,51 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: wms-server
+  # 数据源：本地 MySQL 8.0，wms 数据库（阶段3 已建库）
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/wms?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: 123456
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.wms.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+
+# JWT 配置（阶段4 登录模块使用）
+jwt:
+  secret: wms-graduation-project-secret-key-0123456789abcdefghijklmnopqrstuvwxyz
+  expire: 86400000   # token 有效期：24 小时（毫秒）
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui/index.html
+  api-docs:
+    path: /v3/api-docs
+  default-flat-param-object: true
+
+# ==================== AGV 调度模拟（v2.0 二期扩展） ====================
+# 全局开关：false 时系统不生成 AGV 任务、调度引擎休眠，表现与 v1.0 完全一致
+agv:
+  enabled: true
