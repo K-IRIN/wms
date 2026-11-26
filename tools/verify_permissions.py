@@ -89,6 +89,7 @@ def first_accessible(menus):
 def run():
     results = []
     tokens = {}
+    ok_all = True
     lines = ["# 六角色登录矩阵（阶段 1.7）\n",
              "> 采集时间：%s　采集方式：tools/verify_permissions.py（后端 v1.1 代码）\n" % time.strftime("%Y-%m-%d %H:%M:%S"),
              "> 判据：菜单集合与设计矩阵一致；落地页为该角色首个可访问页；越权接口返回 403。\n"]
@@ -103,6 +104,7 @@ def run():
         if rc != 0:
             lines.append("| %s | %s | ❌ 失败 | - | - | - | - |" % (name, username))
             results.append((code, False, "登录失败"))
+            ok_all = False
             continue
         tok = A.read_token()
         tokens[code] = tok
@@ -119,6 +121,7 @@ def run():
         lines.append("| %s | %s | ✅ | %d | %s | %s | %s |" % (
             name, username, len(paths), landing, expect, detail))
         results.append((code, ok, "菜单=%s 落地=%s" % (paths, landing)))
+        ok_all = ok_all and ok
         print("  %-12s 菜单%2d  落地=%-12s %s" % (code, len(paths), landing,
                                               "OK" if ok else "FAIL " + detail))
 
@@ -140,8 +143,8 @@ def run():
     ]
     allowed = [
         ("调度员 创建搬运任务", "POST", "/agv/task/create", {"taskType": "移库搬运"}, "DISPATCHER", 200),
-        ("运维员 启停 AGV 设备", "PUT", "/agv/device/status/1/0", None, "MAINTENANCE", 200),
-        ("管理员 启停 AGV 设备", "PUT", "/agv/device/status/1/0", None, "ADMIN", 200),
+        ("运维员 启用 AGV 设备", "PUT", "/agv/device/status/1/1", None, "MAINTENANCE", 200),
+        ("管理员 启用 AGV 设备", "PUT", "/agv/device/status/1/1", None, "ADMIN", 200),
         ("访客 查看仓库地图数据", "GET", "/base/location/all", None, "GUEST", 200),
         ("访客 查看 AGV 列表", "GET", "/agv/device/list", None, "GUEST", 200),
     ]
@@ -157,24 +160,40 @@ def run():
         ok = code == expect
         lines.append("| %s | %s | %s | %s | %s | %s |" % (
             desc, role, code, expect, "✅" if ok else "❌", msg))
+        ok_all = ok_all and ok
         print("  拒绝 %-24s %-12s -> %s %s" % (desc, role, code, "OK" if ok else "FAIL"))
 
     lines.append("\n### 应当被允许的正常操作\n")
     lines.append("| 操作 | 角色 | 实际返回码 | 期望 | 结果 |")
     lines.append("|---|---|---|---|---|")
+    created_no = None
     for desc, method, path, body, role, expect in allowed:
         tok = tokens.get(role, "")
         res = A.request(method, path, body, token=tok)
         code = res.get("code")
         ok = code == expect
+        if desc.endswith("创建搬运任务") and res.get("data"):
+            created_no = res.get("data")
         lines.append("| %s | %s | %s | %s | %s |" % (desc, role, code, expect, "✅" if ok else "❌"))
         print("  允许 %-24s %-12s -> %s %s" % (desc, role, code, "OK" if ok else "FAIL"))
+        ok_all = ok_all and ok
+
+    # 清场：验收里创建的演示任务立即取消，避免残留任务占用 AGV（验收不应改变系统状态）
+    if created_no:
+        tok = tokens.get("DISPATCHER", "")
+        page = A.request("GET", "/agv/task/page?pageSize=5&keyword=" + created_no, token=tok)
+        for row in (page.get("data") or {}).get("records", []):
+            if row.get("taskNo") == created_no and row.get("status", 9) < 6:
+                A.request("PUT", "/agv/task/cancel/%s" % row["id"], token=tok)
+                print("  清场：已取消验收任务", created_no)
+                break
 
     os.makedirs(OUT_DIR, exist_ok=True)
     path = os.path.join(OUT_DIR, "权限矩阵.md")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     print("\n权限矩阵已写入：", path)
+    return ok_all
 
 
 if __name__ == "__main__":
