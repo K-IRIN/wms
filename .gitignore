@@ -55,3 +55,7 @@ tools/db-backup/
 
 ### 本地临时文件（tools/api.py 存放登录 token） ###
 .tmp/
+
+### Python ###
+__pycache__/
+*.pyc
