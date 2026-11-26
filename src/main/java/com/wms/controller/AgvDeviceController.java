@@ -3,6 +3,7 @@ package com.wms.controller;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wms.annotation.OperationLog;
+import com.wms.annotation.RequireRole;
 import com.wms.common.BizException;
 import com.wms.common.Result;
 import com.wms.entity.WmsAgvDevice;
@@ -26,6 +27,10 @@ import java.util.List;
 
 /**
  * AGV 设备档案管理（v2.0 WCS-AGV 扩展）
+ *
+ * <p>权限说明：查询类接口对所有登录用户开放（地图/监控页需要读设备列表）；
+ * 六个写接口（建档/编辑/启停/充电/完成充电/删除）仅管理员与设备运维员可操作，
+ * 由 {@link RequireRole} 注解 + AOP 切面统一拦截，未授权返回 403。
  */
 @Tag(name = "AGV设备档案管理")
 @RestController
@@ -81,6 +86,7 @@ public class AgvDeviceController {
 
     @Operation(summary = "新增 AGV 设备")
     @OperationLog("新增AGV设备")
+    @RequireRole({"ADMIN", "MAINTENANCE"})
     @PostMapping("/add")
     public Result<Void> add(@RequestBody WmsAgvDevice device) {
         checkCodeUnique(device.getAgvCode(), null);
@@ -108,6 +114,7 @@ public class AgvDeviceController {
 
     @Operation(summary = "编辑 AGV 设备")
     @OperationLog("编辑AGV设备")
+    @RequireRole({"ADMIN", "MAINTENANCE"})
     @PutMapping("/update")
     public Result<Void> update(@RequestBody WmsAgvDevice device) {
         if (device.getId() == null) {
@@ -123,6 +130,7 @@ public class AgvDeviceController {
 
     @Operation(summary = "启用/停用 AGV 设备")
     @OperationLog("启用/停用AGV设备")
+    @RequireRole({"ADMIN", "MAINTENANCE"})
     @PutMapping("/status/{id}/{enabled}")
     public Result<Void> status(@PathVariable Long id, @PathVariable Integer enabled) {
         WmsAgvDevice exist = deviceService.getById(id);
@@ -142,6 +150,7 @@ public class AgvDeviceController {
 
     @Operation(summary = "开始充电")
     @OperationLog("AGV开始充电")
+    @RequireRole({"ADMIN", "MAINTENANCE"})
     @PutMapping("/charge/{id}")
     public Result<Void> charge(@PathVariable Long id) {
         WmsAgvDevice exist = deviceService.getById(id);
@@ -164,6 +173,7 @@ public class AgvDeviceController {
 
     @Operation(summary = "完成充电")
     @OperationLog("AGV完成充电")
+    @RequireRole({"ADMIN", "MAINTENANCE"})
     @PutMapping("/charge/finish/{id}")
     public Result<Void> chargeFinish(@PathVariable Long id) {
         WmsAgvDevice exist = deviceService.getById(id);
@@ -184,6 +194,7 @@ public class AgvDeviceController {
 
     @Operation(summary = "删除 AGV 设备")
     @OperationLog("删除AGV设备")
+    @RequireRole({"ADMIN", "MAINTENANCE"})
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         WmsAgvDevice exist = deviceService.getById(id);

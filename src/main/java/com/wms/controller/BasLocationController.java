@@ -255,16 +255,32 @@ public class BasLocationController {
         return Result.ok();
     }
 
-    /** 按库位编号自动解析地图坐标，如 A02-01-03 → pos_x=3, pos_y=1（v2.0 AGV 路径模拟用） */
+    /**
+     * 解析库位地图坐标：<b>手工坐标优先，缺失时才按编号回推</b>。
+     *
+     * <p>编号规则：{@code A02-01-03} → pos_y=01、pos_x=03（第 2 段为行号 y，第 3 段为列号 x）。
+     *
+     * <p>改造原因：原实现无条件用编号覆盖坐标，管理员手工把库位挪到 (5,3) 后一保存就被打回原位，
+     * 重启后也回退，无法做库位重排。本实现只在手工坐标缺失的那一维上按编号补齐，
+     * 保证"人工摆放优先、编号兜底"。
+     */
     private void parsePosFromCode(WmsLocation location) {
+        // 手工坐标已完整给出 → 直接尊重人工摆放，不再按编号覆盖
+        if (location.getPosX() != null && location.getPosY() != null) {
+            return;
+        }
         if (location.getLocationCode() == null) {
             return;
         }
         try {
             String[] parts = location.getLocationCode().split("-");
             if (parts.length >= 3) {
-                location.setPosY(Integer.parseInt(parts[1]));
-                location.setPosX(Integer.parseInt(parts[2]));
+                if (location.getPosY() == null) {
+                    location.setPosY(Integer.parseInt(parts[1].trim()));
+                }
+                if (location.getPosX() == null) {
+                    location.setPosX(Integer.parseInt(parts[2].trim()));
+                }
             }
         } catch (NumberFormatException ignored) {
             // 编号不符合规则时坐标留空，AGV 调度会将其视为月台位置

@@ -52,6 +52,18 @@ public class WmsAgvTask implements Serializable {
     /** 开始执行时间 */
     private LocalDateTime startTime;
 
+    /** 到达取货点时刻 */
+    private LocalDateTime pickTime;
+
+    /** 取货完成时刻 */
+    private LocalDateTime pickDoneTime;
+
+    /** 到达卸货点时刻 */
+    private LocalDateTime dropTime;
+
+    /** 卸货完成时刻 */
+    private LocalDateTime dropDoneTime;
+
     /** 完成时间 */
     private LocalDateTime finishTime;
 

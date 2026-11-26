@@ -52,3 +52,6 @@ uploads/
 
 ### 数据库本地快照（tools/db-backup.ps1 生成，不入库） ###
 tools/db-backup/
+
+### 本地临时文件（tools/api.py 存放登录 token） ###
+.tmp/

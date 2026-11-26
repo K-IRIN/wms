@@ -529,6 +529,12 @@ public class AgvEngineService {
 
     // ==================== 日志与推送 ====================
 
+    /** 写一条 AGV 日志（供 Controller 复用，如优先级调整） */
+    public void writeTaskLog(WmsAgvTask task, String logType, String content) {
+        writeLog(task.getAgvId(), task.getId(), logType, content);
+        pushTask(task);
+    }
+
     private void writeLog(Long agvId, Long taskId, String logType, String content) {
         WmsAgvLog log = new WmsAgvLog();
         log.setAgvId(agvId);

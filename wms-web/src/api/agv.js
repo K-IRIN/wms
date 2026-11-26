@@ -17,6 +17,9 @@ export const pageAgvLog = (params) => request.get('/agv/device/log/page', { para
 export const pageAgvTask = (params) => request.get('/agv/task/page', { params })
 export const listActiveAgvTask = () => request.get('/agv/task/active')
 export const getAgvTaskStat = () => request.get('/agv/task/stat')
+export const createAgvTask = (data) => request.post('/agv/task/create', data)
+export const cancelAgvTask = (id) => request.put(`/agv/task/cancel/${id}`)
+export const updateAgvTaskPriority = (id, priority) => request.put(`/agv/task/priority/${id}`, { priority })
 
 // ==================== AGV 异常模拟（仅管理员/设备运维员） ====================
 // type: fault故障停机 / lowBattery电量不足 / block通道堵塞 / pickFail取货失败

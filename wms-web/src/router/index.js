@@ -16,6 +16,29 @@ const router = createRouter({
 const viewModules = import.meta.glob('../views/**/*.vue')
 const Placeholder = () => import('../views/placeholder/index.vue')
 
+/**
+ * 取排序后首个可访问的菜单页，作为登录后的落地页。
+ *
+ * 改造原因：原先固定 redirect '/dashboard'，而访客/操作员等角色并没有数据看板菜单，
+ * 登录后跳到一个未注册路由 → 落到 404/白屏。现在改为按当前角色实际拥有的菜单顺序取首页；
+ * 一个菜单都没有时回落 /profile（个人中心始终可访问）。
+ */
+function firstAccessiblePath(menus) {
+  let found = null
+  const walk = (list) => {
+    for (const m of list || []) {
+      if (found) return
+      if (m.menuType === 'C' && m.path) {
+        found = m.path
+        return
+      }
+      if (m.children && m.children.length) walk(m.children)
+    }
+  }
+  walk(menus)
+  return found || '/profile'
+}
+
 // 菜单树 → 动态路由（挂在 Layout 下）
 function buildRoutes(menus) {
   const children = []
@@ -42,7 +65,7 @@ function buildRoutes(menus) {
   return [{
     path: '/',
     component: () => import('../layout/index.vue'),
-    redirect: '/dashboard',
+    redirect: firstAccessiblePath(menus),
     children
   }]
 }

@@ -20,11 +20,14 @@
         </el-form-item>
       </el-form>
 
-      <div style="margin-bottom: 12px">
+      <div style="margin-bottom: 12px; display: flex; align-items: center; gap: 12px">
         <el-button type="primary" :icon="Plus" @click="openDialog()">新增 AGV</el-button>
+        <el-tag v-if="agvStore.connected" type="success" effect="plain" size="small">实时推送已连接</el-tag>
+        <el-tag v-else type="danger" effect="plain" size="small">实时推送断开</el-tag>
+        <span v-if="agvStore.lastMsgAt" class="live-tip">最后更新 {{ agvStore.lastMsgAt }}</span>
       </div>
 
-      <el-table :data="rows" v-loading="loading" border>
+      <el-table :data="viewRows" v-loading="loading" border>
         <el-table-column prop="agvCode" label="编号" width="95" />
         <el-table-column prop="agvName" label="名称" min-width="110" show-overflow-tooltip />
         <el-table-column prop="maxLoad" label="载重(kg)" width="90" align="right" />
@@ -112,18 +115,29 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import {
   pageAgvDevice, addAgvDevice, updateAgvDevice, updateAgvDeviceStatus,
   chargeAgvDevice, finishChargeAgvDevice, deleteAgvDevice
 } from '../../../api/agv'
+import { useAgvStore } from '../../../store/agv'
 
+const agvStore = useAgvStore()
 const query = reactive({ pageNum: 1, pageSize: 10, keyword: '', status: null })
 const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
+
+/**
+ * 档案页接 WebSocket：状态、电量、坐标由调度引擎每秒推送，
+ * 这里把 HTTP 分页结果与实时数据合并，界面停留 30 秒不手动刷新也能看到变化。
+ */
+const viewRows = computed(() => rows.value.map(r => {
+  const live = agvStore.agvs[r.id]
+  return live ? { ...r, ...live, id: r.id } : r
+}))
 
 const dialogVisible = ref(false)
 const saving = ref(false)
@@ -155,6 +169,8 @@ async function load(page) {
     const res = await pageAgvDevice(query)
     rows.value = res.data.records
     total.value = res.data.total
+    // 把分页结果灌进 store，WebSocket 后续增量覆盖同一条记录
+    agvStore.seedAgvs(res.data.records)
   } finally {
     loading.value = false
   }
@@ -218,3 +234,10 @@ async function remove(row) {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.live-tip {
+  font-size: 12px;
+  color: #909399;
+}
+</style>

@@ -4,6 +4,7 @@ import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wms.annotation.OperationLog;
+import com.wms.annotation.RequireRole;
 import com.wms.common.BizException;
 import com.wms.common.Result;
 import com.wms.entity.WmsAgvDevice;
@@ -85,6 +86,7 @@ public class AgvTaskController {
 
     @Operation(summary = "手动创建任务（演示优先级插队用）")
     @OperationLog("手动创建AGV任务")
+    @RequireRole({"ADMIN", "DISPATCHER"})
     @PostMapping("/create")
     public Result<String> create(@RequestBody WmsAgvTask dto) {
         if (!engine.isEnabled()) {
@@ -157,6 +159,7 @@ public class AgvTaskController {
 
     @Operation(summary = "取消任务")
     @OperationLog("取消AGV任务")
+    @RequireRole({"ADMIN", "DISPATCHER"})
     @PutMapping("/cancel/{id}")
     public Result<Void> cancel(@PathVariable Long id) {
         WmsAgvTask task = taskService.getById(id);
@@ -167,6 +170,29 @@ public class AgvTaskController {
             throw new BizException("任务已结束，不能取消");
         }
         engine.cancelTask(id, "手动取消");
+        return Result.ok();
+    }
+
+    @Operation(summary = "调整任务优先级（紧急插队）")
+    @OperationLog("调整AGV任务优先级")
+    @RequireRole({"ADMIN", "DISPATCHER"})
+    @PutMapping("/priority/{id}")
+    public Result<Void> priority(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        WmsAgvTask task = taskService.getById(id);
+        if (task == null) {
+            throw new BizException("任务不存在");
+        }
+        if (task.getStatus() != AgvEngineService.TASK_PENDING) {
+            throw new BizException("只有待分配任务可以调整优先级");
+        }
+        Integer priority = body.get("priority") == null ? 1 : Integer.valueOf(String.valueOf(body.get("priority")));
+        if (priority != 0 && priority != 1) {
+            throw new BizException("优先级只能是 0（普通）或 1（紧急）");
+        }
+        task.setPriority(priority);
+        taskService.updateById(task);
+        engine.writeTaskLog(task, "优先级调整",
+                "任务「" + task.getTaskNo() + "」优先级调整为" + (priority == 1 ? "紧急" : "普通"));
         return Result.ok();
     }
 

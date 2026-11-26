@@ -1,10 +1,10 @@
 package com.wms.controller;
 
 import com.wms.annotation.OperationLog;
+import com.wms.annotation.RequireRole;
 import com.wms.common.BizException;
 import com.wms.common.Result;
 import com.wms.service.AgvEngineService;
-import com.wms.utils.UserContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -13,16 +13,17 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-
 /**
- * AGV 异常模拟（v2.0）：运维员手动注入故障，验证系统自动恢复能力
- * 仅"管理员"和"设备运维员"可操作
+ * AGV 异常模拟（v2.0）：运维员手动注入故障，验证系统自动恢复能力。
+ *
+ * <p>权限：仅"管理员"和"设备运维员"可注入/修复，由 {@link RequireRole} 注解 + AOP 切面统一拦截，
+ * 未授权返回 403（原先是本类内手写的 checkRole()，现已统一到注解 + 切面，语义更一致）。
  */
 @Tag(name = "AGV异常模拟")
 @RestController
 @RequestMapping("/agv/fault")
 @RequiredArgsConstructor
+@RequireRole({"ADMIN", "MAINTENANCE"})
 public class AgvFaultController {
 
     private final AgvEngineService engine;
@@ -31,7 +32,6 @@ public class AgvFaultController {
     @OperationLog("注入AGV异常")
     @PutMapping("/inject/{agvId}/{type}")
     public Result<Void> inject(@PathVariable Long agvId, @PathVariable String type) {
-        checkRole();
         try {
             switch (type) {
                 case "fault" -> engine.injectFault(agvId);
@@ -50,20 +50,11 @@ public class AgvFaultController {
     @OperationLog("修复AGV故障")
     @PutMapping("/repair/{agvId}")
     public Result<Void> repair(@PathVariable Long agvId) {
-        checkRole();
         try {
             engine.repair(agvId);
         } catch (IllegalStateException e) {
             throw new BizException(e.getMessage());
         }
         return Result.ok();
-    }
-
-    /** 仅管理员或设备运维员可注入/修复 */
-    private void checkRole() {
-        List<String> roles = UserContext.get().roles();
-        if (roles == null || (!roles.contains("ADMIN") && !roles.contains("MAINTENANCE"))) {
-            throw new BizException(403, "仅管理员或设备运维员可执行异常模拟操作");
-        }
     }
 }
