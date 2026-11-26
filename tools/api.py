@@ -22,6 +22,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
 import urllib.error
 
@@ -46,16 +47,23 @@ def write_token(tok):
         f.write(tok)
 
 
-def captcha_code_for(key):
-    """从后端日志里找该 key 对应的验证码答案（开发期后端会打印）"""
-    if not os.path.exists(LOG_FILE):
-        return None
-    with open(LOG_FILE, "r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            m = CAPTCHA_RE.search(line)
-            if m and m.group(1) == key:
-                return m.group(2)
-    return None
+def captcha_code_for(key, timeout=8.0):
+    """从后端日志里找该 key 对应的验证码答案（开发期后端会打印）。
+
+    后端日志经 Tee-Object 落盘有延迟，这里轮询几秒再放弃，
+    否则会偶发「刚拿到验证码、日志里还没写进去」的竞态。
+    """
+    deadline = time.time() + timeout
+    while True:
+        if os.path.exists(LOG_FILE):
+            with open(LOG_FILE, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    m = CAPTCHA_RE.search(line)
+                    if m and m.group(1) == key:
+                        return m.group(2)
+        if time.time() >= deadline:
+            return None
+        time.sleep(0.3)
 
 
 def request(method, path, body=None, token=None, raw=False):

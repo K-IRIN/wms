@@ -10,6 +10,7 @@ import com.wms.websocket.AgvWebSocketHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -109,6 +110,8 @@ public class AgvEngineService {
     private static final int GRID_LIMIT = 30;
     /** 链式推挤的最大搜索深度（格），防止在拥挤网格里做无界搜索 */
     private static final int PUSH_MAX_DEPTH = 12;
+    /** 单个 tick 内最多允许几次让行推挤，防止"推一下又挡上"的乒乓死循环 */
+    private static final int MAX_YIELD_PER_TICK = 2;
     /** 任务回收后的冷却时长（毫秒），修 D4：同一任务不会立刻被派回同一台车 */
     private static final long RECYCLE_COOLDOWN_MS = 5_000L;
 
@@ -157,6 +160,8 @@ public class AgvEngineService {
 
     /** 实时格子占用表：x,y → AGV-ID，每 tick 由设备表重建（阶段 4.2） */
     private final Map<String, Long> cellOwner = new ConcurrentHashMap<>();
+    /** 车辆状态缓存：AGV-ID → 运行状态，随占用表一起每 tick 重建，避免让行判定反复查库 */
+    private final Map<Long, Integer> agvStatusCache = new ConcurrentHashMap<>();
     /** 阻塞格：x,y → 解封时间戳（毫秒）（阶段 4.4） */
     private final Map<String, Long> blockedCells = new ConcurrentHashMap<>();
     /** 等待起始时刻：AGV-ID → 毫秒时间戳，用于 10 秒超时判定（阶段 4.3/4.4） */
@@ -245,7 +250,14 @@ public class AgvEngineService {
             task.setAgvId(best.getId());
             task.setStatus(TASK_TO_PICK);
             task.setStartTime(LocalDateTime.now());
-            taskService.updateById(task);
+            // 派单时清掉上一轮的异常说明（updateById 会跳过 null 字段，必须显式 set）
+            task.setErrorMsg(null);
+            taskService.update(null, Wrappers.<WmsAgvTask>lambdaUpdate()
+                    .eq(WmsAgvTask::getId, task.getId())
+                    .set(WmsAgvTask::getAgvId, best.getId())
+                    .set(WmsAgvTask::getStatus, TASK_TO_PICK)
+                    .set(WmsAgvTask::getStartTime, LocalDateTime.now())
+                    .set(WmsAgvTask::getErrorMsg, null));
             // 该任务已重新派发：清掉冷却与避让记录
             recycleCooldown.remove(task.getId());
             recycleAvoidAgv.remove(task.getId());
@@ -496,24 +508,27 @@ public class AgvEngineService {
         double acc = Math.min(MAX_ACC, moveAcc.getOrDefault(agv.getId(), 0.0) + speed);
         boolean moved = false;
         int movedCells = 0;
+        int yields = 0;
         while (acc >= 1.0 && !(agv.getPosX() == tx && agv.getPosY() == ty)) {
             int[] next = nextStep(agv, task, tx, ty);
             if (next == null) {
                 // 目标被封锁、暂时不可达：等待通道恢复，10 秒仍不可达则回收任务
                 long waited = markWaiting(agv, task, null, "目标暂时不可达，等待通道恢复");
-                escalateWait(agv, task, waited, "目标暂时不可达且无法绕行");
+                escalateWait(agv, task, waited, "目标暂时不可达且无法绕行", null);
                 break;
             }
             String key = cellKey(next[0], next[1]);
             if (isBlocked(key)) {
                 long waited = markWaiting(agv, task, null, "路径前方格子(" + key + ")封锁，等待绕行");
-                escalateWait(agv, task, waited, "前方格子(" + key + ")封锁且无法绕行");
+                escalateWait(agv, task, waited, "前方格子(" + key + ")封锁且无法绕行", null);
                 break;
             }
             Long owner = cellOwner.get(key);
             if (owner != null && !owner.equals(agv.getId())) {
                 // 挡路的是空闲车：先请它让位（链式推挤，可跨多跳），避免被闲置车辆堵死（修 D2/D3）
-                if (isIdleAgv(owner) && tryYieldIdle(owner, agv.getId(), key)) {
+                if (yields < MAX_YIELD_PER_TICK && isIdleAgv(owner)
+                        && tryYieldIdle(owner, agv.getId(), key)) {
+                    yields++;
                     continue;
                 }
                 // 双格预留：对方仍占用目标格，本车等待；记录等待图供死锁检测
@@ -521,7 +536,7 @@ public class AgvEngineService {
                 waitGraph.put(agv.getId(), owner);
                 // 等待超时升级：10 秒强制换路，20 秒回收任务（修 D1：原先此分支无超时，可无限等待）
                 escalateWait(agv, task, waited,
-                        "格子(" + key + ")一直被 " + agvCode(owner) + " 占用");
+                        "格子(" + key + ")一直被 " + agvCode(owner) + " 占用", owner);
                 break;
             }
             // 通过校验：先释放当前格，再占用目标格（同一 tick 内完成，等价双格预留）
@@ -659,7 +674,9 @@ public class AgvEngineService {
     /** 每 tick 由设备表重建占用表：同格只保留一台（异常数据也不至于让地图崩） */
     private void rebuildOccupancy(List<WmsAgvDevice> devices) {
         cellOwner.clear();
+        agvStatusCache.clear();
         for (WmsAgvDevice d : devices) {
+            agvStatusCache.put(d.getId(), d.getStatus());
             if (d.getPosX() != null && d.getPosY() != null) {
                 cellOwner.put(cellKey(d.getPosX(), d.getPosY()), d.getId());
             }
@@ -739,8 +756,11 @@ public class AgvEngineService {
      *   <li>等待 ≥ 10 秒：清空路径，下一 tick 重新 BFS 绕行（记一次升级）</li>
      *   <li>再等 ≥ 10 秒（共 20 秒）：回收任务退回待分配，避免任务卡死</li>
      * </ol>
+     *
+     * @param blockerId 挡住路的车辆（回收后派单时会优先避开它，避免同一处反复堵住）
      */
-    private void escalateWait(WmsAgvDevice agv, WmsAgvTask task, long waited, String reason) {
+    private void escalateWait(WmsAgvDevice agv, WmsAgvTask task, long waited, String reason,
+                               Long blockerId) {
         if (waited < WAIT_REPLAN_MS) {
             return;
         }
@@ -758,7 +778,7 @@ public class AgvEngineService {
                     agv.getAgvCode() + " " + reason + " 持续超过 " + (2 * WAIT_REPLAN_MS / 1000)
                             + " 秒，回收任务退回待分配");
             if (task != null) {
-                recycleTask(task, agv, reason + " 等待超时，任务退回待分配");
+                recycleTask(task, agv, reason + " 等待超时，任务退回待分配", blockerId);
             } else {
                 clearWaiting(agv.getId());
             }
@@ -767,6 +787,10 @@ public class AgvEngineService {
 
     /** 该 AGV 当前是否处于空闲（可被临时推挤让位） */
     private boolean isIdleAgv(Long agvId) {
+        Integer st = agvStatusCache.get(agvId);
+        if (st != null) {
+            return st == AGV_IDLE;
+        }
         WmsAgvDevice agv = deviceService.getById(agvId);
         return agv != null && agv.getStatus() == AGV_IDLE;
     }
@@ -803,32 +827,49 @@ public class AgvEngineService {
             return;
         }
         WmsAgvTask task = taskByAgv.get(victim);
-        // 让行方回退到一处空格：优先用链式推挤（可跨多跳），找不到再退回 1 邻格（修 D2）
-        List<int[]> chain = findPushChain(v, null);
-        if (chain != null && !chain.isEmpty()) {
-            applyPushChain(chain, v, victim, cellKey(v.getPosX(), v.getPosY()));
+        // 让行方回退：优先回自己的待命位（计划里的"强制一方回退待命"），
+        // 待命位被占或不通时再用链式推挤找一处空格
+        int[] home = findFreeHomeCell(v);
+        if (home != null) {
+            cellOwner.remove(cellKey(v.getPosX(), v.getPosY()));
+            v.setPosX(home[0]);
+            v.setPosY(home[1]);
+            cellOwner.put(cellKey(home[0], home[1]), v.getId());
+            v.setBattery(Math.max(0, (v.getBattery() == null ? 100 : v.getBattery()) - BATTERY_PER_CELL));
+            deviceService.updateById(v);
+            pushAgv(v);
+            clearPath(victim);
             writeLog(victim, task == null ? null : task.getId(), "冲突",
-                    "检测到死锁等待环 " + cycle + "，" + v.getAgvCode() + " 按规则让行并重新规划路径");
+                    "检测到死锁等待环 " + cycle + "，" + v.getAgvCode() + " 按规则让行，回退待命位 ("
+                            + home[0] + "," + home[1] + ") 并重新规划路径");
             pushAlert("warn", "死锁解除：" + v.getAgvCode() + " 让行");
         } else {
-            int[] side = findFreeSideCell(v, null);
-            if (side != null) {
-                cellOwner.remove(cellKey(v.getPosX(), v.getPosY()));
-                v.setPosX(side[0]);
-                v.setPosY(side[1]);
-                cellOwner.put(cellKey(side[0], side[1]), v.getId());
-                v.setBattery(Math.max(0, (v.getBattery() == null ? 100 : v.getBattery()) - BATTERY_PER_CELL));
-                deviceService.updateById(v);
-                pushAgv(v);
-                clearPath(victim);
+            List<int[]> chain = findPushChain(v, null, null);
+            if (chain != null && !chain.isEmpty()) {
+                applyPushChain(chain, v, victim, cellKey(v.getPosX(), v.getPosY()), true);
                 writeLog(victim, task == null ? null : task.getId(), "冲突",
-                        "检测到死锁等待环 " + cycle + "，" + v.getAgvCode() + " 按规则让行，回退到 ("
-                                + side[0] + "," + side[1] + ") 并重新规划路径");
+                        "检测到死锁等待环 " + cycle + "，" + v.getAgvCode() + " 按规则让行并重新规划路径");
                 pushAlert("warn", "死锁解除：" + v.getAgvCode() + " 让行");
-            } else if (task != null) {
-                writeLog(victim, task.getId(), "冲突",
-                        "检测到死锁等待环 " + cycle + "，" + v.getAgvCode() + " 无空闲格可让行，回收任务");
-                recycleTask(task, v, "死锁且无空闲格让行，任务退回待分配");
+            } else {
+                int[] side = findFreeSideCell(v, null);
+                if (side != null) {
+                    cellOwner.remove(cellKey(v.getPosX(), v.getPosY()));
+                    v.setPosX(side[0]);
+                    v.setPosY(side[1]);
+                    cellOwner.put(cellKey(side[0], side[1]), v.getId());
+                    v.setBattery(Math.max(0, (v.getBattery() == null ? 100 : v.getBattery()) - BATTERY_PER_CELL));
+                    deviceService.updateById(v);
+                    pushAgv(v);
+                    clearPath(victim);
+                    writeLog(victim, task == null ? null : task.getId(), "冲突",
+                            "检测到死锁等待环 " + cycle + "，" + v.getAgvCode() + " 按规则让行，回退到 ("
+                                    + side[0] + "," + side[1] + ") 并重新规划路径");
+                    pushAlert("warn", "死锁解除：" + v.getAgvCode() + " 让行");
+                } else if (task != null) {
+                    writeLog(victim, task.getId(), "冲突",
+                            "检测到死锁等待环 " + cycle + "，" + v.getAgvCode() + " 无空闲格可让行，回收任务");
+                    recycleTask(task, v, "死锁且无空闲格让行，任务退回待分配");
+                }
             }
         }
         clearWaiting(victim);
@@ -907,6 +948,25 @@ public class AgvEngineService {
         return manhattan(agv.getPosX(), agv.getPosY(), target[0], target[1]);
     }
 
+    /**
+     * 找让行方回退的落点：优先自己的待命位（计划里的"强制一方回退待命"），
+     * 待命位被别人占着或不可通行时返回 null。
+     */
+    private int[] findFreeHomeCell(WmsAgvDevice agv) {
+        if (agv.getHomeX() == null || agv.getHomeY() == null) {
+            return null;
+        }
+        String key = cellKey(agv.getHomeX(), agv.getHomeY());
+        if (isBlocked(key)) {
+            return null;
+        }
+        Long holder = cellOwner.get(key);
+        if (holder != null && !holder.equals(agv.getId())) {
+            return null;
+        }
+        return new int[]{agv.getHomeX(), agv.getHomeY()};
+    }
+
     /** 找一个可侧移的空闲格：不越界、非阻塞、无人占用 */
     private int[] findFreeSideCell(WmsAgvDevice agv, String excludeKey) {
         int maxX = Math.min(GRID_LIMIT, Math.max(gridMaxX(), agv.getPosX()));
@@ -944,20 +1004,33 @@ public class AgvEngineService {
         if (owner == null || owner.getStatus() != AGV_IDLE) {
             return false;
         }
-        // 目标空位不能是请求方正在等的那一格
-        List<int[]> chain = findPushChain(owner, blockedKey);
+        // 目标空位不能是请求方正在等的那一格，也不能落在请求方后面的路径上
+        // （否则"推过去正好又挡上"，会变成乒乓死循环）
+        Set<String> avoid = new HashSet<>();
+        List<int[]> reqPath = pathQueue.get(requesterId);
+        if (reqPath != null) {
+            for (int[] p : reqPath) {
+                avoid.add(cellKey(p[0], p[1]));
+            }
+        }
+        // 目标空位不能是请求方正在等的那一格，也不能落在请求方后面的路径上
+        // （否则"推过去正好又挡上"，会变成乒乓死循环）
+        List<int[]> chain = findPushChain(owner, blockedKey, avoid);
         if (chain == null || chain.isEmpty()) {
             return false;
         }
-        return applyPushChain(chain, owner, requesterId, blockedKey);
+        return applyPushChain(chain, owner, requesterId, blockedKey, false);
     }
 
     /**
      * 从 {@code owner} 出发找一条"推挤链"：chain[0] 是 owner 所在格，
      * chain[last] 是一个真正空闲的格子，中间经过的格子可以由其他空闲车占据。
      * 找不到返回 null。
+     *
+     * @param excludeKey 不能作为落点的格子（通常是请求方正在等的那一格）
+     * @param avoid      不能作为落点的格子集合（通常是请求方剩余路径上的格子）
      */
-    private List<int[]> findPushChain(WmsAgvDevice owner, String excludeKey) {
+    private List<int[]> findPushChain(WmsAgvDevice owner, String excludeKey, Set<String> avoid) {
         int maxX = Math.min(GRID_LIMIT, Math.max(gridMaxX(), owner.getPosX()));
         int maxY = Math.min(GRID_LIMIT, Math.max(gridMaxY(), owner.getPosY()));
         String startKey = cellKey(owner.getPosX(), owner.getPosY());
@@ -981,7 +1054,8 @@ public class AgvEngineService {
                     }
                     String key = cellKey(nx, ny);
                     if (seen.contains(key) || isBlocked(key)
-                            || (excludeKey != null && excludeKey.equals(key))) {
+                            || (excludeKey != null && excludeKey.equals(key))
+                            || (avoid != null && avoid.contains(key))) {
                         continue;
                     }
                     // 这一格是否被车占着？只有空闲车可以被推
@@ -1002,46 +1076,61 @@ public class AgvEngineService {
         return null;
     }
 
-    /** 由 parent 链回溯出推挤链（不含起点，含终点空位） */
+    /** 由 parent 链回溯出推挤链（<b>含起始格</b>）：chain[0] 是 owner 所在格，chain[末] 是真正空位 */
     private List<int[]> buildPushChain(Map<String, int[]> parent, String startKey, String endKey) {
         List<int[]> chain = new ArrayList<>();
         String cur = endKey;
         int guard = 0;
-        while (!cur.equals(startKey) && guard++ < PUSH_MAX_DEPTH + 2) {
+        while (cur != null && guard++ < PUSH_MAX_DEPTH + 2) {
             String[] xy = cur.split(",");
             chain.add(new int[]{Integer.parseInt(xy[0]), Integer.parseInt(xy[1])});
+            if (cur.equals(startKey)) {
+                java.util.Collections.reverse(chain);
+                return chain;
+            }
             int[] p = parent.get(cur);
             if (p == null) {
                 return null;
             }
             cur = cellKey(p[0], p[1]);
         }
-        java.util.Collections.reverse(chain);
-        return chain;
+        return null;
     }
 
     /**
-     * 执行链式推挤：从链尾（真正的空位）往前依次挪车。
-     * 链尾先动，前面的车再跟进它刚腾出来的格子。
+     * 执行链式推挤：chain = [owner 所在格, 中间格…, 真正空位]，
+     * 第 i 台的 AGV 从 chain[i] 挪到 chain[i+1]。
+     *
+     * <p>从链尾往前执行：先把链上最后一台挪进空位，再依次跟进，
+     * 整条链像传送带一样把 owner 腾出来。
+     *
+     * @param allowOwnerNonIdle owner 本身是否允许不是空闲态（死锁让行方是执行中的车，需要能挪）
      */
     private boolean applyPushChain(List<int[]> chain, WmsAgvDevice owner,
-                                   Long requesterId, String blockedKey) {
-        // 先收集每台车的新位置，并校验所有车都还可推（中途失败会留下半推状态）
-        List<long[]> moves = new ArrayList<>();
-        for (int[] from : chain) {
-            Long holder = cellOwner.get(cellKey(from[0], from[1]));
-            if (holder != null) {
-                WmsAgvDevice mover = deviceService.getById(holder);
-                if (mover == null || mover.getStatus() != AGV_IDLE) {
-                    return false;
-                }
-                moves.add(new long[]{holder, from[0], from[1]});
-            }
-        }
-        if (moves.isEmpty()) {
+                                   Long requesterId, String blockedKey,
+                                   boolean allowOwnerNonIdle) {
+        // 链至少要有两格（起点 + 目标空格）
+        if (chain == null || chain.size() < 2) {
             return false;
         }
-        // 从链尾往前推：链尾那台车先挪进空格，其余依次跟进
+        // 先把每一跳的目标算好，并校验链上的车都还能挪（否则会留下半推状态）
+        List<long[]> moves = new ArrayList<>();
+        for (int i = 0; i < chain.size() - 1; i++) {
+            Long holder = cellOwner.get(cellKey(chain.get(i)[0], chain.get(i)[1]));
+            if (holder == null) {
+                return false;
+            }
+            WmsAgvDevice mover = deviceService.getById(holder);
+            if (mover == null) {
+                return false;
+            }
+            boolean isOwner = i == 0;
+            if (mover.getStatus() != AGV_IDLE && !(isOwner && allowOwnerNonIdle)) {
+                return false;
+            }
+            moves.add(new long[]{holder, chain.get(i + 1)[0], chain.get(i + 1)[1]});
+        }
+        // 从链尾往前执行
         for (int i = moves.size() - 1; i >= 0; i--) {
             long[] mv = moves.get(i);
             WmsAgvDevice mover = deviceService.getById(mv[0]);
@@ -1213,7 +1302,6 @@ public class AgvEngineService {
     public WmsAgvTask createTask(String taskType, String orderNo, Long materialId,
                                  Long fromLocationId, Long toLocationId, Integer priority) {
         WmsAgvTask task = new WmsAgvTask();
-        task.setTaskNo(genTaskNo());
         task.setTaskType(taskType);
         task.setOrderNo(orderNo);
         task.setMaterialId(materialId);
@@ -1221,7 +1309,19 @@ public class AgvEngineService {
         task.setToLocationId(toLocationId);
         task.setPriority(priority == null ? 0 : priority);
         task.setStatus(TASK_PENDING);
-        taskService.save(task);
+        // 任务编号唯一性：并发建单可能算出同一个号，撞 uk_task_no 时重取序号重试（修 5.1）
+        for (int attempt = 0; attempt < 50; attempt++) {
+            task.setTaskNo(genTaskNo());
+            try {
+                taskService.save(task);
+                break;
+            } catch (DuplicateKeyException e) {
+                if (attempt == 49) {
+                    throw new IllegalStateException("任务编号生成失败：并发冲突重试 50 次仍未成功", e);
+                }
+                log.debug("任务编号 {} 撞号，重试第 {} 次", task.getTaskNo(), attempt + 1);
+            }
+        }
         writeLog(null, task.getId(), "状态变更",
                 "任务生成：「" + task.getTaskNo() + "」" + taskType + "，"
                         + (orderNo == null ? "手动创建" : "单据 " + orderNo));
@@ -1229,11 +1329,32 @@ public class AgvEngineService {
         return task;
     }
 
-    /** 任务编号：AGVT + 日期 + 3位当日序号 */
+    /**
+     * 任务编号：AGVT + 日期 + 3位当日序号。
+     *
+     * <p><b>修 5.1</b>：原来用 {@code count+1} 取序号——并发建单时两个线程会算出同一个号，
+     * 撞唯一键 {@code uk_task_no}。现在改为「取当日最大号 +1」，用 SQL 聚合一次算出，
+     * 并在 {@link #createTask} 里对唯一键冲突做递增重试。
+     * 不新增序列表，守住"25 张表不变"的红线。
+     */
     private String genTaskNo() {
         String prefix = "AGVT" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        long count = taskService.lambdaQuery().likeRight(WmsAgvTask::getTaskNo, prefix).count();
-        return prefix + String.format("%03d", count + 1);
+        return prefix + String.format("%03d", nextSeq(prefix));
+    }
+
+    /** 当日已用的最大序号（SQL 聚合，跨过 999 也不会算错） */
+    private int nextSeq(String prefix) {
+        QueryWrapper<WmsAgvTask> qw = new QueryWrapper<>();
+        qw.select("IFNULL(MAX(CAST(SUBSTRING(task_no, " + (prefix.length() + 1)
+                        + ") AS UNSIGNED)), 0) AS max_seq")
+                .likeRight("task_no", prefix);
+        List<Map<String, Object>> rows = taskService.getBaseMapper().selectMaps(qw);
+        if (rows.isEmpty()) {
+            return 1;
+        }
+        Object max = rows.get(0).get("max_seq");
+        int seq = max == null ? 0 : ((Number) max).intValue();
+        return seq + 1;
     }
 
     // ==================== 实验台：批量建单与一键重置（阶段 5.1） ====================
@@ -1390,6 +1511,23 @@ public class AgvEngineService {
      * 沿用上一轮的 pick/drop 时间戳会让任务时间线出现"倒序"（修 D5）。
      */
     private void recycleTask(WmsAgvTask task, WmsAgvDevice agv, String reason) {
+        recycleTask(task, agv, reason, null);
+    }
+
+    /**
+     * 回收任务：在途任务退回待分配队列（保留 priority，紧急任务自然插队），
+     * AGV 释放为空闲（低电时下一周期由 autoChargeTick 转入充电）。
+     *
+     * <p><b>修 D4</b>：回收后给任务设一段冷却，并记下"刚出过问题的那台车"，
+     * 避免同一任务在几秒内被立刻派回同一台车、再原地死锁、再回收——形成活锁。
+     *
+     * <p><b>修 D5</b>：回收时清空各阶段时间戳。任务回到队列后会重新走一遍完整流程，
+     * 沿用上一轮的 pick/drop 时间戳会让任务时间线出现"倒序"（修 D5）。
+     *
+     * @param avoidAgvId 挡路的那台车（若有）。派单时优先避开它，
+     *                    避免任务被重新派给同一台、又堵在同一处
+     */
+    private void recycleTask(WmsAgvTask task, WmsAgvDevice agv, String reason, Long avoidAgvId) {
         assertTransition(task, TASK_PENDING);
         persistRecycle(task, TASK_PENDING, reason);
         waitTicks.remove(task.getId());
@@ -1399,7 +1537,7 @@ public class AgvEngineService {
         agv.setStatus(AGV_IDLE);
         deviceService.updateById(agv);
         // 冷却 + 避让（修 D4：避免活锁）
-        markRecycleCooldown(task.getId(), agv.getId());
+        markRecycleCooldown(task.getId(), avoidAgvId != null ? avoidAgvId : agv.getId());
         writeLog(agv.getId(), task.getId(), "告警",
                 agv.getAgvCode() + " " + reason + "，任务「" + task.getTaskNo() + "」退回待分配（优先级 "
                         + task.getPriority() + " 保留，"

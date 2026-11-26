@@ -23,6 +23,8 @@
 
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -32,6 +34,13 @@ import api as A  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.join(ROOT, "docs", "evidence")
+MYSQL = r"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe"
+
+
+def sql_exec(stmt):
+    """直接改库（只用于布置测试场景：把某台车摆到指定格子）"""
+    args = [MYSQL, "-uroot", "-p123456", "--default-character-set=utf8mb4", "wms", "-e", stmt]
+    subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 PASS, FAIL = "✅", "❌"
 results = []          # (编号, 名称, 结论, 说明)
@@ -78,6 +87,30 @@ def loc_id(code):
         if l.get("locationCode") == code:
             return l.get("id")
     return None
+
+
+def task_by_no(no):
+    """按任务号取任务记录"""
+    if not no:
+        return None
+    for t in tasks_all():
+        if t.get("taskNo") == no:
+            return t
+    return None
+
+
+def log_rows():
+    """取 AGV 运行日志（全量，轮询取完）"""
+    rows = []
+    page = 1
+    while True:
+        data = get("/agv/device/log/page?pageNum=%d&pageSize=200" % page) or {}
+        recs = data.get("records") or []
+        rows.extend(recs)
+        if len(rows) >= (data.get("total") or 0) or not recs:
+            break
+        page += 1
+    return rows
 
 
 def fleet_positions():
@@ -158,11 +191,15 @@ def scenario_d123_d4():
             if sec > max_wait_sec:
                 max_wait_sec = sec
                 max_wait_agv = code
-        # 回收次数
-        for t in snap["tasks"]:
-            err = t.get("err") or ""
-            if "退回待分配" in err or "回收" in err:
-                recycle_counts[t.get("no")] += 1
+        # 回收次数：按日志里的"退回待分配"事件计数（任务在队列里挂着时 errorMsg 会一直显示，
+        # 按任务列表采样会把同一次回收重复计多次，所以改从日志事件数）
+        recycle_counts = Counter()
+        for row in log_rows():
+            content = row.get("content") or ""
+            if "退回待分配" in content:
+                m = re.search(r"任务「([^」]+)」", content)
+                if m:
+                    recycle_counts[m.group(1)] += 1
         # 任务状态停滞检测
         for t in snap["tasks"]:
             no = t.get("no")
@@ -182,8 +219,7 @@ def scenario_d123_d4():
            "100 秒采样内未出现两车同格" if not dup_detected else "出现同格重叠！")
     record("D1", "占用等待有超时", max_wait_sec <= 45,
            "最长连续等待 %d 秒（%s）" % (max_wait_sec, max_wait_agv or "-"))
-    record("D2", "让行可跨多跳", True, "链式推挤：空闲车被推动让出通道（见采样）")
-    record("D3", "闲置车阻塞可识别", True, "空闲车无出边时按「被闲置车阻塞」纳入环处理")
+    # D2（让行）与 D3（闲置车阻塞）改到 scenario_yield 里做确定性布置的真实验收
     worst = max(recycle_counts.values()) if recycle_counts else 0
     record("D4", "无活锁（回收有冷却）", worst <= 3,
            "单任务最多被回收 %d 次%s" % (worst, ("（%s）" % recycle_counts.most_common(1)) if recycle_counts else ""))
@@ -302,6 +338,70 @@ def scenario_headon():
            "40 秒采样未出现同格重叠" if not overlap else "出现同格重叠！")
 
 
+def scenario_yield():
+    """D2 / D3 的真实验收：空闲车占住工位，执行中的车必须把它推开，而不是无限等待。
+
+    做法（确定性布置，不靠碰运气撞出拥堵）：
+      ① 一键重置，把所有车放回待命位
+      ② 直接改库：把 AGV-05 摆到货架 A02-02-01（1,2）上并置为空闲
+      ③ 建一个取货点就是 A02-02-01 的任务 → AGV-01 必然要进这一格，但被 AGV-05 占着
+      ④ 观察：AGV-05 必须被推走（位置变化），且 AGV-01 在 30 秒内完成取货
+    """
+    print("\n[场景 5] 空闲车挡工位 → 链式让行（D2 / D3）")
+    scenario_reset()
+    time.sleep(2)
+
+    shelf = loc_id("A02-02-01")
+    blocker = next((d for d in devices() if d.get("agvCode") == "AGV-05"), None)
+    if not shelf or not blocker:
+        record("D2", "让行可跨多跳", False, "缺少 A02-02-01 库位或 AGV-05")
+        return
+
+    # 把 AGV-05 摆到货架格 (1,2) 上：状态空闲、且停用（不参与派单），
+    # 这样它只占着格子不接任务，执行中的车才会真的被它挡住。
+    sql_exec("UPDATE wms_agv_device SET pos_x=1, pos_y=2, home_x=1, home_y=2, status=0, enabled=0 "
+             "WHERE agv_code='AGV-05';")
+    time.sleep(2)
+    before = next((d for d in devices() if d.get("agvCode") == "AGV-05"), {})
+    print("  布置：AGV-05 停在 (%s,%s) 占用货架 A02-02-01" % (before.get("posX"), before.get("posY")))
+
+    r = post("/agv/task/create", {"taskType": "移库搬运", "fromLocationId": shelf,
+                                  "toLocationId": loc_id("A02-05-03"), "priority": 1})
+    no = r.get("data")
+
+    moved = False
+    picked = False
+    waited_at = None
+    for i in range(40):
+        time.sleep(1)
+        d5 = next((d for d in devices() if d.get("agvCode") == "AGV-05"), {})
+        if (d5.get("posX"), d5.get("posY")) != (before.get("posX"), before.get("posY")):
+            moved = True
+        t = task_by_no(no)
+        if t and t.get("status") in (2, 3, 4, 5, 6):
+            picked = True
+        grid = get("/agv/fault/grid") or {}
+        if waited_at is None and grid.get("waiting"):
+            waited_at = grid["waiting"][0]
+        if moved and picked:
+            break
+
+    d5 = next((d for d in devices() if d.get("agvCode") == "AGV-05"), {})
+    t = task_by_no(no)
+    yield_log = ""
+    for w in (get("/agv/fault/grid") or {}).get("waiting") or []:
+        yield_log = w.get("reason") or ""
+
+    record("D2", "让行可跨多跳（空闲车真被推开）", moved,
+           "AGV-05 位置 %s,%s → %s,%s%s" % (before.get("posX"), before.get("posY"),
+                                        d5.get("posX"), d5.get("posY"),
+                                        "（已被推走）" if moved else "（原地未动！）"))
+    record("D3", "被闲置车阻塞可自行解除", picked,
+           "任务 %s 状态=%s（到达取货点并继续执行=%s）" % (
+               no, t.get("status") if t else "?", picked))
+    print("  等待原因样本：%s" % (yield_log or "（无等待）"))
+
+
 def main():
     if A.do_login("admin", "123456") != 0:
         print("登录失败")
@@ -314,6 +414,7 @@ def main():
     scenario_d5()
     scenario_positive()
     scenario_headon()
+    scenario_yield()
 
     ok_count = sum(1 for _, _, ok, _ in results if ok)
     total = len(results)
