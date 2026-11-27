@@ -4,7 +4,15 @@ import { useUserStore } from '../store/user'
 // 静态路由：登录、注册（无需权限）
 const staticRoutes = [
   { path: '/login', name: 'Login', component: () => import('../views/login/index.vue'), meta: { title: '登录' } },
-  { path: '/register', name: 'Register', component: () => import('../views/register/index.vue'), meta: { title: '注册' } }
+  { path: '/register', name: 'Register', component: () => import('../views/register/index.vue'), meta: { title: '注册' } },
+  // 阶段 9.5：AGV 实时大屏（独立页面，不经侧边栏布局）。只要求登录、不限角色——
+  // 访客 GUEST 也能看大屏，但写操作仍由各接口的 @RequireRole 拦截。
+  {
+    path: '/screen/agv-map',
+    name: 'AgvMapScreen',
+    component: () => import('../views/screen/AgvMapScreen.vue'),
+    meta: { title: 'AGV 实时大屏', requiresAuth: true }
+  }
 ]
 
 const router = createRouter({

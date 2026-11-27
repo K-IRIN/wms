@@ -17,6 +17,7 @@
           <div class="stat-chip" style="--c:#22b07d"><span class="num">{{ agvStore.activeTasks.length }}</span>活动任务</div>
         </div>
         <div class="map-tools">
+          <el-button size="small" type="primary" plain @click="openScreen">独立大屏</el-button>
           <el-checkbox v-model="showPath" class="path-toggle">任务路径</el-checkbox>
           <el-button-group>
             <el-button size="small" :icon="Minus" @click="zoom(-8)" />
@@ -71,9 +72,9 @@
           </g>
 
           <!-- AGV 小车：CSS transition 平滑补间移动；等待让行时加呼吸光圈 + 标签（阶段 4.6） -->
-          <g v-for="agv in agvList" :key="'agv' + agv.id" class="agv-node"
-            :class="{ selected: selected?.id === agv.id, fault: agv.status === 3, waiting: isWaiting(agv.id) }"
-            :style="{ transform: `translate(${centerX(agv.posX)}px, ${centerY(agv.posY)}px)` }"
+          <g v-for="agv in agvList" :key="'agv' + agv.id"
+            :class="['agv-node', { selected: selected?.id === agv.id, fault: agv.status === 3, waiting: isWaiting(agv.id), jumping: jumping[agv.id] }]"
+            :style="agvStyle(agv)"
             @click="selected = agv">
             <circle r="19" :fill="agvColor(agv)" opacity="0.18" class="agv-halo" />
             <circle r="12" :fill="agvColor(agv)" :stroke="selected?.id === agv.id ? '#fff' : 'rgba(255,255,255,0.65)'"
@@ -143,7 +144,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
+import { useRoute } from 'vue-router'
 import { Close, Minus, Plus } from '@element-plus/icons-vue'
 import { useAgvStore } from '../../../store/agv'
 import { listAgvDevice, listActiveAgvTask } from '../../../api/agv'
@@ -154,7 +156,10 @@ const loading = ref(false)
 const locations = ref([])      // 全部库位（含坐标）
 const selected = ref(null)     // 当前点选的 AGV
 const showPath = ref(true)     // 是否显示任务路径
-const cellSize = ref(64)       // 格子边长（可缩放）
+// 格子边长：支持 ?cell=84（独立大屏用更大格子），缺省 64，范围 40~110
+const route = useRoute()
+const initialCell = Number(route.query.cell)
+const cellSize = ref(Number.isFinite(initialCell) ? Math.min(110, Math.max(40, initialCell)) : 64)
 const GAP = 10                 // 格子间距
 const PAD = 26                 // 画布内边距
 
@@ -224,6 +229,44 @@ function zoom(delta) {
   cellSize.value = Math.min(110, Math.max(40, cellSize.value + delta))
 }
 
+function openScreen() {
+  window.open('/screen/agv-map?cell=84', '_blank')
+}
+
+// ==================== AGV 移动动画（阶段 9.5：按格走，不斜走） ====================
+// 引擎 1 秒推一次坐标：单格移动用 0.9s 线性补间；跨多格（死锁让行/回收归位/重置）
+// 一律直接落位并淡入——否则浏览器会把 (x,y)→(x+1,y+1) 插值成一条斜线。
+const prevPos = {}
+const jumping = reactive({})
+
+function agvStyle(agv) {
+  const p = prevPos[agv.id]
+  const dist = p ? Math.abs(p.x - (agv.posX ?? 0)) + Math.abs(p.y - (agv.posY ?? 0)) : 0
+  return {
+    transform: `translate(${centerX(agv.posX)}px, ${centerY(agv.posY)}px)`,
+    transition: dist === 1 ? 'transform 0.9s linear' : 'none'
+  }
+}
+
+watch(
+  () => agvList.value.map((a) => `${a.id}:${a.posX},${a.posY}`).join('|'),
+  () => {
+    const snaps = []
+    for (const a of agvList.value) {
+      const p = prevPos[a.id]
+      if (p && Math.abs(p.x - (a.posX ?? 0)) + Math.abs(p.y - (a.posY ?? 0)) > 1) snaps.push(a.id)
+    }
+    if (snaps.length) {
+      for (const id of snaps) jumping[id] = true
+      setTimeout(() => { for (const id of snaps) jumping[id] = false }, 240)
+    }
+    // DOM 打完补丁后再记坐标，保证下一次渲染比较的是"上一帧位置"
+    nextTick(() => {
+      for (const a of agvList.value) prevPos[a.id] = { x: a.posX ?? 0, y: a.posY ?? 0 }
+    })
+  }
+)
+
 // 初始数据：HTTP 全量拉取灌入 store，之后由 WebSocket 增量实时刷新
 onMounted(async () => {
   loading.value = true
@@ -232,6 +275,8 @@ onMounted(async () => {
     locations.value = locRes.data.filter(l => l.posX != null && l.posY != null)
     agvStore.seedAgvs(agvRes.data)
     agvStore.seedTasks(taskRes.data)
+    await nextTick()
+    for (const a of agvList.value) prevPos[a.id] = { x: a.posX ?? 0, y: a.posY ?? 0 }
   } finally {
     loading.value = false
   }
@@ -378,10 +423,19 @@ onMounted(async () => {
   to { stroke-dashoffset: -13; }
 }
 
-/* AGV 节点：引擎每秒推一次坐标，用 transition 做平滑补间 */
+/* AGV 节点：单格移动由内联 transition 补间；跨格跳变直接落位并淡入（阶段 9.5） */
 .agv-node {
-  transition: transform 0.92s linear;
+  transition: opacity 0.2s ease;
   cursor: pointer;
+}
+
+.agv-node.jumping {
+  animation: agvFadeIn 0.24s ease;
+}
+
+@keyframes agvFadeIn {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
 }
 
 .agv-node .agv-halo {

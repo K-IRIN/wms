@@ -38,4 +38,6 @@ if (-not (Test-Path $jar)) {
 Write-Host "[backend] 日志文件：$logFile" -ForegroundColor Cyan
 Write-Host "[backend] 启动 wms-server（Ctrl+C 停止）" -ForegroundColor Cyan
 
-java -jar $jar 2>&1 | Tee-Object -FilePath $logFile
+# 阶段 9.5：WebSocket 阻塞写超时 2s。慢客户端不读 socket 时，发送线程不会被
+# 内核的 TCP 阻塞无限期挂住，而是超时抛异常，由 AgvWebSocketHandler 摘除并关闭连接。
+java "-Dorg.apache.tomcat.websocket.BLOCKING_SEND_TIMEOUT=2000" -jar $jar 2>&1 | Tee-Object -FilePath $logFile
