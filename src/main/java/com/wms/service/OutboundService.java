@@ -50,6 +50,7 @@ public class OutboundService {
     private final WmsCustomerService customerService;
     private final WmsWarehouseService warehouseService;
     private final AgvHookService agvHookService;
+    private final InventoryService inventoryOps;
 
     /** 单据状态：0待审核 1已审核（拣货/复核中） 2已驳回 3已完成 */
     public static final int STATUS_PENDING = 0;
@@ -247,13 +248,20 @@ public class OutboundService {
         if (order.getStatus() != STATUS_PENDING) {
             throw new BizException("单据当前状态不可审核");
         }
-        order.setAuditor(currentName());
-        order.setAuditTime(LocalDateTime.now());
-        order.setAuditRemark(dto.getAuditRemark());
 
         if (Boolean.FALSE.equals(dto.getApprove())) {
-            order.setStatus(STATUS_REJECTED);
-            orderService.updateById(order);
+            releaseReservations(order);
+            boolean rejected = orderService.lambdaUpdate()
+                    .eq(WmsOutboundOrder::getId, order.getId())
+                    .eq(WmsOutboundOrder::getStatus, STATUS_PENDING)
+                    .set(WmsOutboundOrder::getStatus, STATUS_REJECTED)
+                    .set(WmsOutboundOrder::getAuditor, currentName())
+                    .set(WmsOutboundOrder::getAuditTime, LocalDateTime.now())
+                    .set(WmsOutboundOrder::getAuditRemark, dto.getAuditRemark())
+                    .update();
+            if (!rejected) {
+                throw new BizException("单据已被其他请求处理，请刷新后重试");
+            }
             return;
         }
 
@@ -269,6 +277,7 @@ public class OutboundService {
         }).collect(Collectors.toList()));
 
         // 自动生成拣货任务：为每条明细分配库位（够用库位中库存最少的优先，减少碎片）
+        // 并立即预占 frozen_qty —— 审核通过后这批货只能被本单复核，别的出库单抢不走
         for (WmsOutboundItem item : items) {
             List<WmsInventory> candidates = inventoryService.lambdaQuery()
                     .eq(WmsInventory::getWarehouseId, order.getWarehouseId())
@@ -282,14 +291,48 @@ public class OutboundService {
                 throw new BizException("物料「" + (m == null ? item.getMaterialId().toString() : m.getMaterialName())
                         + "」无单一库位库存满足 " + item.getQuantity() + "，无法生成拣货任务");
             }
-            item.setLocationId(candidates.get(0).getLocationId());
+            WmsInventory target = candidates.get(0);
+            item.setLocationId(target.getLocationId());
             itemService.updateById(item);
+            if (!inventoryOps.freezeStock(target.getId(), item.getQuantity())) {
+                throw new BizException("库存已被其他出库占用，请刷新后重试");
+            }
         }
-        order.setPickStatus(0);
-        order.setStatus(STATUS_AUDITED);
-        orderService.updateById(order);
+        boolean audited = orderService.lambdaUpdate()
+                .eq(WmsOutboundOrder::getId, order.getId())
+                .eq(WmsOutboundOrder::getStatus, STATUS_PENDING)
+                .set(WmsOutboundOrder::getStatus, STATUS_AUDITED)
+                .set(WmsOutboundOrder::getPickStatus, 0)
+                .set(WmsOutboundOrder::getAuditor, currentName())
+                .set(WmsOutboundOrder::getAuditTime, LocalDateTime.now())
+                .set(WmsOutboundOrder::getAuditRemark, dto.getAuditRemark())
+                .update();
+        if (!audited) {
+            throw new BizException("单据已被其他请求处理，请刷新后重试");
+        }
         // AGV 联动：为每条拣货明细生成出库搬运任务（拣货库位 → 发货月台）
         agvHookService.onPickGenerated(order, items);
+    }
+
+    /**
+     * 释放该单已预占的 frozen_qty（作废/驳回时调用）。
+     * 只有已分配库位的明细才有预占；条件 UPDATE 保证不会把 frozen 减成负数。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void releaseReservations(WmsOutboundOrder order) {
+        List<WmsOutboundItem> items = itemService.lambdaQuery()
+                .eq(WmsOutboundItem::getOrderId, order.getId())
+                .isNotNull(WmsOutboundItem::getLocationId).list();
+        for (WmsOutboundItem item : items) {
+            WmsInventory inv = inventoryService.lambdaQuery()
+                    .eq(WmsInventory::getWarehouseId, order.getWarehouseId())
+                    .eq(WmsInventory::getLocationId, item.getLocationId())
+                    .eq(WmsInventory::getMaterialId, item.getMaterialId())
+                    .one();
+            if (inv != null && inv.getFrozenQty() > 0) {
+                inventoryOps.releaseStock(inv.getId(), item.getQuantity());
+            }
+        }
     }
 
     // ==================== 拣货（扫码核验） ====================
@@ -356,14 +399,10 @@ public class OutboundService {
             if (inv == null) {
                 throw new BizException("库存记录不存在，数据异常");
             }
-            // 乐观锁扣减：quantity - frozen >= 需求 才能更新成功，防止并发超卖/负库存
-            boolean ok = inventoryService.update(Wrappers.<WmsInventory>lambdaUpdate()
-                    .setSql("quantity = quantity - " + item.getQuantity())
-                    .eq(WmsInventory::getId, inv.getId())
-                    .ge(WmsInventory::getQuantity, item.getQuantity() + inv.getFrozenQty()));
-            if (!ok) {
+            // 原子同扣：quantity 与 frozen_qty 一起减，条件 frozen >= qty 且 quantity >= qty
+            if (!inventoryOps.consumeStock(inv.getId(), item.getQuantity())) {
                 WmsMaterial m = materialService.getById(item.getMaterialId());
-                throw new BizException("库存不足，复核失败：" + (m == null ? "" : m.getMaterialName())
+                throw new BizException("库存不足或预占已释放，复核失败：" + (m == null ? "" : m.getMaterialName())
                         + "（可能刚被其他出库占用，请刷新重试）");
             }
             WmsInventoryLog log = new WmsInventoryLog();
@@ -392,9 +431,17 @@ public class OutboundService {
                 }
             }
         }
-        order.setReviewStatus(1);
-        order.setStatus(STATUS_DONE);
-        orderService.updateById(order);
+        // 末尾状态 CAS：16 个并发复核只能有一个成功，其余整事务回滚（不会二次扣减）
+        boolean done = orderService.lambdaUpdate()
+                .eq(WmsOutboundOrder::getId, orderId)
+                .eq(WmsOutboundOrder::getStatus, STATUS_AUDITED)
+                .eq(WmsOutboundOrder::getPickStatus, 2)
+                .set(WmsOutboundOrder::getStatus, STATUS_DONE)
+                .set(WmsOutboundOrder::getReviewStatus, 1)
+                .update();
+        if (!done) {
+            throw new BizException("单据已被其他请求复核");
+        }
     }
 
     private String currentName() {

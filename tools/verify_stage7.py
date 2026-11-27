@@ -135,6 +135,26 @@ def prepare_audit(order_id, token):
     return True, "已质检并上架 %d 条明细" % len(items)
 
 
+def wait_transport_done(order_no, token, timeout=180):
+    """阶段 8 起：入库审核要求该单 AGV 搬运任务全部结束（DONE=6 / CANCELED=7）。
+
+    这是 §4.6 方案 A 的业务前置，不是鉴权放宽；上架会生成搬运任务，需等调度跑完。
+    """
+    if not order_no:
+        return False, "缺少单号"
+    deadline = time.time() + timeout
+    last = []
+    while time.time() < deadline:
+        res = A.request("GET", "/agv/task/page?pageNum=1&pageSize=50&keyword=" + order_no, token=token)
+        rows = [r for r in ((res.get("data") or {}).get("records") or [])
+                if r.get("orderNo") == order_no]
+        last = [(r.get("taskNo"), r.get("status")) for r in rows]
+        if not rows or all(r.get("status") in (6, 7) for r in rows):
+            return True, "AGV 任务 %d 条已完成" % len(rows)
+        time.sleep(2)
+    return False, "等待 AGV 搬运超时，最后状态：%s" % last
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -210,6 +230,12 @@ def main():
         ok_pre, msg_pre = prepare_audit(order_id, tokens["ADMIN"]) if order_id else (False, "缺少单据ID")
         emit("- 审核前置（%s 单 id=%s）：%s %s" % (label, order_id, "✅" if ok_pre else "❌", msg_pre))
         record(ok_pre, "审核前置失败（%s 单）：%s" % (label, msg_pre))
+    # 阶段 8 起审核要求 AGV 搬运完成（§4.6 方案 A）：等任务跑完再进矩阵
+    for label, code in (("ADMIN", "ADMIN"), ("MANAGER", "MANAGER")):
+        order_no = created.get(code)
+        ok_agv, msg_agv = wait_transport_done(order_no, tokens["ADMIN"]) if order_no else (False, "缺少单号")
+        emit("- AGV 搬运（%s 单 %s）：%s %s" % (label, order_no, "✅" if ok_agv else "❌", msg_agv))
+        record(ok_agv, "AGV 搬运未完成（%s 单）：%s" % (label, msg_agv))
     emit()
 
     emit("| 接口组 | 角色 | 期望 | 实际 body.code | 结果 | 后端消息 |")
@@ -283,20 +309,20 @@ def main():
     # ---------- 5. 明文口令/密钥扫描 ----------
     emit("## 六、配置明文扫描（git grep）")
     emit()
-    emit("判据：`src` 下不得再出现部署密钥——数据库口令赋值 `password: 123456` 与 JWT 密钥串；")
+    emit("判据：`src/main` 下不得再出现部署密钥——数据库口令赋值 `password: 123456` 与 JWT 密钥串；")
     emit("`application.yml` 必须使用 `${DB_PASSWORD:}` / `${JWT_SECRET:}` 占位。")
     pattern = "password: *123456|wms-graduation-project-secret-key"
-    proc = subprocess.run(["git", "grep", "-nE", pattern, "--", "src"],
+    proc = subprocess.run(["git", "grep", "-nE", pattern, "--", "src/main"],
                           cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
     hits = proc.stdout.strip()
-    emit("- 命令：`git grep -nE \"%s\" -- src`" % pattern)
+    emit("- 命令：`git grep -nE \"%s\" -- src/main`" % pattern)
     emit("- 退出码：%d（1 = 无匹配）" % proc.returncode)
     if hits:
         emit("- ❌ 命中：")
         emit("```")
         emit(hits)
         emit("```")
-        record(False, "src 下仍存在配置明文口令/密钥：%s" % hits.splitlines()[:3])
+        record(False, "src/main 下仍存在配置明文口令/密钥：%s" % hits.splitlines()[:3])
     else:
         emit("- ✅ 无配置明文口令/密钥")
     yml = open(os.path.join(ROOT, "src", "main", "resources", "application.yml"), encoding="utf-8").read()

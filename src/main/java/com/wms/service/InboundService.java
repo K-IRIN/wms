@@ -7,6 +7,7 @@ import com.wms.dto.AuditDTO;
 import com.wms.dto.InboundCreateDTO;
 import com.wms.dto.QualityDTO;
 import com.wms.dto.ShelfDTO;
+import com.wms.entity.WmsAgvTask;
 import com.wms.entity.WmsArea;
 import com.wms.entity.WmsInboundItem;
 import com.wms.entity.WmsInboundOrder;
@@ -50,6 +51,8 @@ public class InboundService {
     private final WmsSupplierService supplierService;
     private final WmsWarehouseService warehouseService;
     private final AgvHookService agvHookService;
+    private final WmsAgvTaskService agvTaskService;
+    private final InventoryService inventoryOps;
 
     /** 单据状态：0待审核 2已驳回 3已完成 */
     public static final int STATUS_PENDING = 0;
@@ -346,9 +349,6 @@ public class InboundService {
         }
         List<WmsInboundItem> items = itemService.lambdaQuery()
                 .eq(WmsInboundItem::getOrderId, order.getId()).list();
-        order.setAuditor(currentName());
-        order.setAuditTime(LocalDateTime.now());
-        order.setAuditRemark(dto.getAuditRemark());
 
         if (Boolean.FALSE.equals(dto.getApprove())) {
             // 驳回：释放已上架库位，允许修改后重提
@@ -366,10 +366,23 @@ public class InboundService {
                             .update();
                 }
             }
-            order.setStatus(STATUS_REJECTED);
-            orderService.updateById(order);
+            // 状态 CAS：并发审核只能有一个成功
+            boolean rejected = orderService.lambdaUpdate()
+                    .eq(WmsInboundOrder::getId, order.getId())
+                    .eq(WmsInboundOrder::getStatus, STATUS_PENDING)
+                    .set(WmsInboundOrder::getStatus, STATUS_REJECTED)
+                    .set(WmsInboundOrder::getAuditor, currentName())
+                    .set(WmsInboundOrder::getAuditTime, LocalDateTime.now())
+                    .set(WmsInboundOrder::getAuditRemark, dto.getAuditRemark())
+                    .update();
+            if (!rejected) {
+                throw new BizException("单据已被其他请求处理，请刷新后重试");
+            }
             return;
         }
+
+        // §4.6 方案 A：账先于物 —— 搬运任务没跑完不允许入账
+        assertAgvTransportDone(order);
 
         // 通过前校验：全部明细已质检；合格明细已全部上架
         long unChecked = items.stream().filter(i -> i.getQualityStatus() == 0).count();
@@ -386,28 +399,10 @@ public class InboundService {
             throw new BizException("还有 " + unShelved + " 条合格明细未上架");
         }
 
-        // 库存生效 + 写库存流水
+        // 库存生效 + 写库存流水：原子累加（并发下不丢更新），失败随事务回滚
         for (WmsInboundItem item : qualified) {
-            WmsInventory inv = inventoryService.lambdaQuery()
-                    .eq(WmsInventory::getWarehouseId, order.getWarehouseId())
-                    .eq(WmsInventory::getLocationId, item.getLocationId())
-                    .eq(WmsInventory::getMaterialId, item.getMaterialId())
-                    .one();
-            int before;
-            if (inv == null) {
-                inv = new WmsInventory();
-                inv.setWarehouseId(order.getWarehouseId());
-                inv.setLocationId(item.getLocationId());
-                inv.setMaterialId(item.getMaterialId());
-                inv.setQuantity(item.getQuantity());
-                inv.setFrozenQty(0);
-                inventoryService.save(inv);
-                before = 0;
-            } else {
-                before = inv.getQuantity();
-                inv.setQuantity(before + item.getQuantity());
-                inventoryService.updateById(inv);
-            }
+            int before = inventoryOps.addStock(order.getWarehouseId(), item.getLocationId(),
+                    item.getMaterialId(), item.getQuantity());
             WmsInventoryLog log = new WmsInventoryLog();
             log.setMaterialId(item.getMaterialId());
             log.setWarehouseId(order.getWarehouseId());
@@ -420,8 +415,34 @@ public class InboundService {
             log.setOperator(currentName());
             inventoryLogService.save(log);
         }
-        order.setStatus(STATUS_DONE);
-        orderService.updateById(order);
+        // 末尾状态 CAS：作为提交闸门，抢输的线程整事务回滚（库存增量一并回滚）
+        boolean done = orderService.lambdaUpdate()
+                .eq(WmsInboundOrder::getId, order.getId())
+                .eq(WmsInboundOrder::getStatus, STATUS_PENDING)
+                .set(WmsInboundOrder::getStatus, STATUS_DONE)
+                .set(WmsInboundOrder::getAuditor, currentName())
+                .set(WmsInboundOrder::getAuditTime, LocalDateTime.now())
+                .set(WmsInboundOrder::getAuditRemark, dto.getAuditRemark())
+                .update();
+        if (!done) {
+            throw new BizException("单据已被其他请求处理，请刷新后重试");
+        }
+    }
+
+    /** 该入库单生成的 AGV 搬运任务必须全部终结（已完成/已取消），否则拒绝入账 */
+    private void assertAgvTransportDone(WmsInboundOrder order) {
+        List<WmsAgvTask> tasks = agvTaskService.lambdaQuery()
+                .eq(WmsAgvTask::getOrderNo, order.getOrderNo()).list();
+        if (tasks.isEmpty()) {
+            return;
+        }
+        long unfinished = tasks.stream().filter(t -> t.getStatus() == null
+                || (t.getStatus() != AgvEngineService.TASK_DONE
+                && t.getStatus() != AgvEngineService.TASK_CANCELED)).count();
+        if (unfinished > 0) {
+            throw new BizException("该入库单还有 " + unfinished
+                    + " 条 AGV 搬运任务未完成，请等待搬运完成后再审核");
+        }
     }
 
     private void checkOrderPending(Long orderId, String action) {

@@ -11,6 +11,7 @@ import com.wms.entity.WmsLocation;
 import com.wms.entity.WmsMaterial;
 import com.wms.entity.WmsMoveOrder;
 import com.wms.entity.WmsWarehouse;
+import com.wms.mapper.WmsInventoryMapper;
 import com.wms.utils.UserContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
@@ -34,6 +35,7 @@ import java.util.stream.Collectors;
 public class InventoryService {
 
     private final WmsInventoryService inventoryService;
+    private final WmsInventoryMapper inventoryMapper;
     private final WmsInventoryLogService inventoryLogService;
     private final WmsMaterialService materialService;
     private final WmsLocationService locationService;
@@ -171,6 +173,73 @@ public class InventoryService {
         }).collect(Collectors.toList());
     }
 
+    // ==================== 库存原子写（阶段 8：唯一写入口） ====================
+
+    /**
+     * 原子累加库存（不存在则按唯一键插入），返回本次变动前的数量（供流水记账）。
+     * 入库审核、移库目标、盘点盘盈都走这里，杜绝 read-modify-write 覆盖并发写入。
+     */
+    public int addStock(Long warehouseId, Long locationId, Long materialId, int delta) {
+        if (delta <= 0) {
+            throw new BizException("入库数量必须大于 0");
+        }
+        inventoryMapper.addStock(warehouseId, locationId, materialId, delta);
+        WmsInventory now = inventoryService.lambdaQuery()
+                .eq(WmsInventory::getWarehouseId, warehouseId)
+                .eq(WmsInventory::getLocationId, locationId)
+                .eq(WmsInventory::getMaterialId, materialId)
+                .one();
+        if (now == null) {
+            throw new BizException("库存累加失败，请刷新后重试");
+        }
+        return now.getQuantity() - delta;
+    }
+
+    /** 原子扣减可用库存：quantity -= qty，条件 quantity - frozen_qty >= qty */
+    public boolean subStock(Long inventoryId, int qty) {
+        if (qty <= 0) {
+            throw new BizException("出库数量必须大于 0");
+        }
+        return inventoryService.update(Wrappers.<WmsInventory>lambdaUpdate()
+                .setSql("quantity = quantity - " + qty)
+                .eq(WmsInventory::getId, inventoryId)
+                .apply("quantity - frozen_qty >= {0}", qty));
+    }
+
+    /** 原子预占：frozen_qty += qty，条件 quantity - frozen_qty >= qty（可用量不足则整单失败） */
+    public boolean freezeStock(Long inventoryId, int qty) {
+        if (qty <= 0) {
+            throw new BizException("预占数量必须大于 0");
+        }
+        return inventoryService.update(Wrappers.<WmsInventory>lambdaUpdate()
+                .setSql("frozen_qty = frozen_qty + " + qty)
+                .eq(WmsInventory::getId, inventoryId)
+                .apply("quantity - frozen_qty >= {0}", qty));
+    }
+
+    /** 原子释放预占：frozen_qty -= qty，条件 frozen_qty >= qty */
+    public boolean releaseStock(Long inventoryId, int qty) {
+        if (qty <= 0) {
+            return true;
+        }
+        return inventoryService.update(Wrappers.<WmsInventory>lambdaUpdate()
+                .setSql("frozen_qty = frozen_qty - " + qty)
+                .eq(WmsInventory::getId, inventoryId)
+                .ge(WmsInventory::getFrozenQty, qty));
+    }
+
+    /** 出库复核：quantity 与 frozen_qty 同扣，条件 frozen_qty >= qty 且 quantity >= qty */
+    public boolean consumeStock(Long inventoryId, int qty) {
+        if (qty <= 0) {
+            throw new BizException("复核数量必须大于 0");
+        }
+        return inventoryService.update(Wrappers.<WmsInventory>lambdaUpdate()
+                .setSql("quantity = quantity - " + qty + ", frozen_qty = frozen_qty - " + qty)
+                .eq(WmsInventory::getId, inventoryId)
+                .ge(WmsInventory::getFrozenQty, qty)
+                .ge(WmsInventory::getQuantity, qty));
+    }
+
     // ==================== 移库 ====================
 
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
@@ -197,34 +266,13 @@ public class InventoryService {
         if (fromInv == null || fromInv.getQuantity() - fromInv.getFrozenQty() < quantity) {
             throw new BizException("源库位可用库存不足，无法移库");
         }
-        // 源扣减（乐观锁）
-        boolean ok = inventoryService.update(Wrappers.<WmsInventory>lambdaUpdate()
-                .setSql("quantity = quantity - " + quantity)
-                .eq(WmsInventory::getId, fromInv.getId())
-                .ge(WmsInventory::getQuantity, quantity + fromInv.getFrozenQty()));
-        if (!ok) {
+        // 源扣减（条件 UPDATE：quantity - frozen >= quantity）
+        if (!subStock(fromInv.getId(), quantity)) {
             throw new BizException("源库位库存不足，移库失败（请刷新重试）");
         }
-        // 目标累加
-        WmsInventory toInv = inventoryService.lambdaQuery()
-                .eq(WmsInventory::getLocationId, toLocationId)
-                .eq(WmsInventory::getMaterialId, materialId)
-                .one();
-        int toBefore;
-        if (toInv == null) {
-            toInv = new WmsInventory();
-            toInv.setWarehouseId(toWarehouseOf(toLoc));
-            toInv.setLocationId(toLocationId);
-            toInv.setMaterialId(materialId);
-            toInv.setQuantity(quantity);
-            toInv.setFrozenQty(0);
-            inventoryService.save(toInv);
-            toBefore = 0;
-        } else {
-            toBefore = toInv.getQuantity();
-            toInv.setQuantity(toBefore + quantity);
-            inventoryService.updateById(toInv);
-        }
+        // 目标累加（原子 upsert，不再 read-modify-write）
+        Long toWarehouseId = toWarehouseOf(toLoc);
+        int toBefore = addStock(toWarehouseId, toLocationId, materialId, quantity);
         // 移库单
         WmsMoveOrder move = new WmsMoveOrder();
         move.setMaterialId(materialId);
@@ -240,7 +288,7 @@ public class InventoryService {
         // 双向流水
         writeLog(materialId, fromInv.getWarehouseId(), fromLocationId, "移库",
                 -quantity, fromInv.getQuantity(), fromInv.getQuantity() - quantity, move.getOrderNo());
-        writeLog(materialId, toInv.getWarehouseId(), toLocationId, "移库",
+        writeLog(materialId, toWarehouseId, toLocationId, "移库",
                 quantity, toBefore, toBefore + quantity, move.getOrderNo());
         // 库位状态联动：源库位空了→释放；目标库位空闲→占用
         freeLocationIfEmpty(fromLocationId);
@@ -367,26 +415,21 @@ public class InventoryService {
         if (inv == null) {
             throw new BizException("库存记录不存在");
         }
-        if (unfreeze) {
-            if (inv.getFrozenQty() < qty) {
-                throw new BizException("解冻数量超过冻结数量");
-            }
-            inv.setFrozenQty(inv.getFrozenQty() - qty);
-        } else {
-            if (inv.getQuantity() - inv.getFrozenQty() < qty) {
-                throw new BizException("可冻结数量不足");
-            }
-            inv.setFrozenQty(inv.getFrozenQty() + qty);
+        // 条件 UPDATE 原子改冻结量，不再 read-modify-write
+        int beforeFrozen = inv.getFrozenQty();
+        boolean ok = unfreeze ? releaseStock(inventoryId, qty) : freezeStock(inventoryId, qty);
+        if (!ok) {
+            throw new BizException(unfreeze ? "解冻数量超过冻结数量" : "可冻结数量不足");
         }
-        inventoryService.updateById(inv);
+        int afterFrozen = unfreeze ? beforeFrozen - qty : beforeFrozen + qty;
         WmsInventoryLog log = new WmsInventoryLog();
         log.setMaterialId(inv.getMaterialId());
         log.setWarehouseId(inv.getWarehouseId());
         log.setLocationId(inv.getLocationId());
         log.setChangeType(unfreeze ? "解冻" : "冻结");
         log.setChangeQty(unfreeze ? -qty : qty);
-        log.setBeforeQty(unfreeze ? inv.getFrozenQty() + qty : inv.getFrozenQty() - qty);
-        log.setAfterQty(inv.getFrozenQty());
+        log.setBeforeQty(beforeFrozen);
+        log.setAfterQty(afterFrozen);
         log.setOperator(currentName());
         log.setRemark(reason.trim());
         inventoryLogService.save(log);

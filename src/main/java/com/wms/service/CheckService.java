@@ -3,6 +3,7 @@ package com.wms.service;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.wms.common.BizException;
 import com.wms.dto.AuditDTO;
 import com.wms.dto.CheckCreateDTO;
@@ -49,6 +50,7 @@ public class CheckService {
     private final WmsLocationService locationService;
     private final WmsAreaService areaService;
     private final WmsWarehouseService warehouseService;
+    private final InventoryService inventoryOps;
 
     /** 状态：0待盘点 1待审核 3已完成 */
     public static final int STATUS_CHECKING = 0;
@@ -268,38 +270,49 @@ public class CheckService {
         order.setAuditRemark(dto.getAuditRemark());
 
         if (Boolean.FALSE.equals(dto.getApprove())) {
-            // 驳回 → 退回待盘点，可修改重提
-            order.setStatus(STATUS_CHECKING);
-            orderService.updateById(order);
+            // 驳回 → 退回待盘点，可修改重提（CAS 防并发重复处理）
+            boolean back = orderService.lambdaUpdate()
+                    .eq(WmsCheckOrder::getId, order.getId())
+                    .eq(WmsCheckOrder::getStatus, STATUS_AUDITING)
+                    .set(WmsCheckOrder::getStatus, STATUS_CHECKING)
+                    .set(WmsCheckOrder::getAuditor, currentName())
+                    .set(WmsCheckOrder::getAuditTime, LocalDateTime.now())
+                    .set(WmsCheckOrder::getAuditRemark, dto.getAuditRemark())
+                    .update();
+            if (!back) {
+                throw new BizException("盘点单已被其他请求处理，请刷新后重试");
+            }
             return;
         }
 
-        // 通过：按差异修正库存并写流水
+        // 通过：按差异增量修正库存（quantity = quantity + diff），不再用实盘快照覆盖并发写入
         List<WmsCheckItem> items = itemService.lambdaQuery()
                 .eq(WmsCheckItem::getOrderId, order.getId()).list();
         for (WmsCheckItem item : items) {
             if (item.getDiffQty() == null || item.getDiffQty() == 0) {
                 continue;
             }
+            // P2-8：补 warehouseId 条件，避免跨仓库同库位同物料误命中
             WmsInventory inv = inventoryService.lambdaQuery()
+                    .eq(WmsInventory::getWarehouseId, order.getWarehouseId())
                     .eq(WmsInventory::getLocationId, item.getLocationId())
                     .eq(WmsInventory::getMaterialId, item.getMaterialId())
                     .one();
             int before = inv == null ? 0 : inv.getQuantity();
             if (inv == null) {
-                inv = new WmsInventory();
-                inv.setWarehouseId(order.getWarehouseId());
-                inv.setLocationId(item.getLocationId());
-                inv.setMaterialId(item.getMaterialId());
-                inv.setQuantity(item.getActualQty());
-                inv.setFrozenQty(0);
-                inventoryService.save(inv);
-            } else {
-                if (inv.getFrozenQty() > item.getActualQty()) {
-                    throw new BizException("库位冻结数量大于实盘数量，请先处理冻结库存再修正");
+                if (item.getDiffQty() < 0) {
+                    throw new BizException("盘点库位无库存记录，不能盘亏：物料 " + item.getMaterialId());
                 }
-                inv.setQuantity(item.getActualQty());
-                inventoryService.updateById(inv);
+                inventoryOps.addStock(order.getWarehouseId(), item.getLocationId(),
+                        item.getMaterialId(), item.getDiffQty());
+            } else {
+                boolean shifted = inventoryService.update(Wrappers.<WmsInventory>lambdaUpdate()
+                        .setSql("quantity = quantity + " + item.getDiffQty())
+                        .eq(WmsInventory::getId, inv.getId())
+                        .apply("quantity + {0} >= frozen_qty", item.getDiffQty()));
+                if (!shifted) {
+                    throw new BizException("盘点修正后库存将低于冻结数，请先处理冻结库存");
+                }
             }
             WmsInventoryLog log = new WmsInventoryLog();
             log.setMaterialId(item.getMaterialId());
@@ -308,14 +321,24 @@ public class CheckService {
             log.setChangeType("盘点");
             log.setChangeQty(item.getDiffQty());
             log.setBeforeQty(before);
-            log.setAfterQty(item.getActualQty());
+            log.setAfterQty(before + item.getDiffQty());
             log.setOrderNo(order.getOrderNo());
             log.setOperator(currentName());
             log.setRemark("盘点修正：" + item.getReason());
             inventoryLogService.save(log);
         }
-        order.setStatus(STATUS_DONE);
-        orderService.updateById(order);
+        // 末尾状态 CAS：并发审核只能有一个生效
+        boolean done = orderService.lambdaUpdate()
+                .eq(WmsCheckOrder::getId, order.getId())
+                .eq(WmsCheckOrder::getStatus, STATUS_AUDITING)
+                .set(WmsCheckOrder::getStatus, STATUS_DONE)
+                .set(WmsCheckOrder::getAuditor, currentName())
+                .set(WmsCheckOrder::getAuditTime, LocalDateTime.now())
+                .set(WmsCheckOrder::getAuditRemark, dto.getAuditRemark())
+                .update();
+        if (!done) {
+            throw new BizException("盘点单已被其他请求审核");
+        }
     }
 
     private String currentName() {

@@ -40,6 +40,7 @@ public class DocService {
     private final WmsMaterialService materialService;
     private final WmsLocationService locationService;
     private final AgvHookService agvHookService;
+    private final OutboundService outboundService;
 
     /** 各类型单据状态文案 */
     private static final Map<String, Map<Integer, String>> STATUS_NAMES = Map.of(
@@ -127,6 +128,8 @@ public class DocService {
                 if (order.getStatus() != 0 && order.getStatus() != 2) {
                     throw new BizException("仅待审核或已驳回的出库单可作废，该单当前状态不允许作废");
                 }
+                // 释放本单预占（待审核单没有预占，此处为幂等兜底）
+                outboundService.releaseReservations(order);
                 outboundOrderService.lambdaUpdate()
                         .eq(WmsOutboundOrder::getId, order.getId())
                         .set(WmsOutboundOrder::getInvalidFlag, 1)
