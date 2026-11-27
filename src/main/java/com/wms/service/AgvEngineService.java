@@ -6,6 +6,11 @@ import com.wms.entity.WmsAgvDevice;
 import com.wms.entity.WmsAgvLog;
 import com.wms.entity.WmsAgvTask;
 import com.wms.entity.WmsLocation;
+import com.wms.service.agv.AgvGridView;
+import com.wms.service.agv.AgvPathPlanner;
+import com.wms.service.agv.AgvPublisher;
+import com.wms.service.agv.AgvTaskLifecycle;
+import com.wms.service.agv.PathRegistry;
 import com.wms.websocket.AgvWebSocketHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 
 /**
  * AGV 调度引擎（v2.0 WCS 模拟核心，阶段 4 升级为多车协同）
@@ -92,13 +98,13 @@ public class AgvEngineService {
     /** 可取任务的最低电量（低于此电量不再派单） */
     private static final int MIN_ASSIGN_BATTERY = 20;
     /** 空闲自动充电的电量阈值 */
-    private static final int AUTO_CHARGE_BATTERY = 10;
+    public static final int AUTO_CHARGE_BATTERY = 10;
     /** 每移动 1 格耗电（%） */
     private static final int BATTERY_PER_CELL = 1;
     /** 充电中每秒恢复电量（%） */
     private static final int CHARGE_PER_TICK = 10;
     /** 取货/卸货动作耗时（秒） */
-    private static final int LOAD_UNLOAD_TICKS = 2;
+    public static final int LOAD_UNLOAD_TICKS = 2;
 
     /** 阻塞格封锁时长（毫秒），阶段 4.4：格子级障碍 10 秒 */
     private static final long BLOCK_MS = 10_000L;
@@ -112,14 +118,18 @@ public class AgvEngineService {
     private static final int PUSH_MAX_DEPTH = 12;
     /** 单个 tick 内最多允许几次让行推挤，防止"推一下又挡上"的乒乓死循环 */
     private static final int MAX_YIELD_PER_TICK = 2;
-    /** 任务回收后的冷却时长（毫秒），修 D4：同一任务不会立刻被派回同一台车 */
-    private static final long RECYCLE_COOLDOWN_MS = 5_000L;
 
     private final WmsAgvDeviceService deviceService;
     private final WmsAgvTaskService taskService;
     private final WmsAgvLogService logService;
     private final WmsLocationService locationService;
     private final AgvWebSocketHandler wsHandler;
+    /** 阶段 9：异步推送（tick 不再直接写 socket） */
+    private final AgvPublisher publisher;
+    /** 阶段 9：任务生命周期（状态机/回收/日志） */
+    private final AgvTaskLifecycle lifecycle;
+    /** 阶段 9：路径队列 */
+    private final PathRegistry pathRegistry;
 
     /** 全局开关：false 时引擎休眠、不生成任务，系统表现与 v1.0 一致 */
     @Value("${agv.enabled:true}")
@@ -146,17 +156,8 @@ public class AgvEngineService {
 
     /** 移动累计器：AGV-ID → 已累计的可移动格数（支持 0.8 格/秒这类小速度） */
     private final Map<Long, Double> moveAcc = new ConcurrentHashMap<>();
-    /** 装卸货倒计时：任务ID → 剩余秒数 */
-    private final Map<Long, Integer> waitTicks = new ConcurrentHashMap<>();
     /** 库位坐标缓存（库位ID → [x, y]），每秒重建一次，数据量小 */
     private final Map<Long, int[]> locationPosCache = new ConcurrentHashMap<>();
-
-    /** 路径队列：AGV-ID → 剩余路径格子（不含当前格），跨 tick 续走（阶段 4.1） */
-    private final Map<Long, List<int[]>> pathQueue = new ConcurrentHashMap<>();
-    /** 路径所属任务阶段：AGV-ID → 任务状态，阶段变化即重算路径 */
-    private final Map<Long, Integer> pathPhase = new ConcurrentHashMap<>();
-    /** 路径目标格：AGV-ID → "x,y" */
-    private final Map<Long, String> pathTarget = new ConcurrentHashMap<>();
 
     /** 实时格子占用表：x,y → AGV-ID，每 tick 由设备表重建（阶段 4.2） */
     private final Map<String, Long> cellOwner = new ConcurrentHashMap<>();
@@ -172,10 +173,11 @@ public class AgvEngineService {
     private final Set<Long> waitingThisTick = ConcurrentHashMap.newKeySet();
     /** 等待升级阶段：AGV-ID → 已升级次数（1=已强制换路，2=已回收任务），修 D1 等待无超时 */
     private final Map<Long, Integer> waitStage = new ConcurrentHashMap<>();
-    /** 任务回收冷却：taskId → 冷却截止时间戳，避免同一任务被立刻派回同一台车形成活锁（修 D4） */
-    private final Map<Long, Long> recycleCooldown = new ConcurrentHashMap<>();
-    /** 任务回收避让：taskId → 刚出过问题的 AGV-ID，派单时优先跳过它（修 D4） */
-    private final Map<Long, Long> recycleAvoidAgv = new ConcurrentHashMap<>();
+
+    /** 本 tick 使用的网格快照（阶段 9：寻路不再回查数据库） */
+    private volatile AgvGridView gridView = AgvGridView.of(0, 0, Set.of(), Set.of());
+    /** 最近 tick 耗时（毫秒），最多保留 3600 个（1 小时） */
+    private final ConcurrentLinkedDeque<Long> tickDurations = new ConcurrentLinkedDeque<>();
 
     public boolean isEnabled() {
         return enabled;
@@ -188,6 +190,7 @@ public class AgvEngineService {
         if (!enabled) {
             return;
         }
+        long begin = System.nanoTime();
         try {
             refreshLocationCache();
             expireBlocks();
@@ -199,7 +202,39 @@ public class AgvEngineService {
         } catch (Exception e) {
             // 引擎异常不能影响主系统，记日志即可
             log.error("AGV 调度引擎异常：{}", e.getMessage(), e);
+        } finally {
+            recordTickDuration((System.nanoTime() - begin) / 1_000_000L);
         }
+    }
+
+    private void recordTickDuration(long millis) {
+        tickDurations.addLast(millis);
+        while (tickDurations.size() > 3600) {
+            tickDurations.pollFirst();
+        }
+    }
+
+    /** 引擎运行指标（阶段 9 验收：tick p99 / 推送丢帧 / 队列水位） */
+    public Map<String, Object> metrics() {
+        long[] values = tickDurations.stream().mapToLong(Long::longValue).sorted().toArray();
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("enabled", enabled);
+        map.put("ticks", values.length);
+        map.put("tickP50Ms", percentile(values, 50));
+        map.put("tickP95Ms", percentile(values, 95));
+        map.put("tickP99Ms", percentile(values, 99));
+        map.put("tickMaxMs", values.length == 0 ? 0 : values[values.length - 1]);
+        map.put("lastTickMs", values.length == 0 ? 0 : values[values.length - 1]);
+        map.put("publisher", publisher.stats());
+        return map;
+    }
+
+    private static long percentile(long[] sorted, int p) {
+        if (sorted.length == 0) {
+            return 0;
+        }
+        int idx = (int) Math.ceil(sorted.length * p / 100.0) - 1;
+        return sorted[Math.max(0, Math.min(idx, sorted.length - 1))];
     }
 
     // ==================== 任务分配 ====================
@@ -226,13 +261,13 @@ public class AgvEngineService {
                 return;
             }
             // 修 D4：刚被回收的任务还在冷却期，先不派，避免"回收→原车接单→原地死锁"活锁
-            if (isInRecycleCooldown(task.getId())) {
+            if (lifecycle.isInRecycleCooldown(task.getId())) {
                 continue;
             }
             int[] from = resolvePos(task.getFromLocationId());
             // 距离取货点曼哈顿距离最近的 AGV 优先；近+负载惩罚策略额外叠加负载分（阶段 5.3）
             // 刚在这单上出过问题的车尽量避开（修 D4）
-            Long avoidId = recycleAvoidAgv.get(task.getId());
+            Long avoidId = lifecycle.avoidAgv(task.getId());
             WmsAgvDevice best = idleAgvs.stream()
                     .filter(a -> !a.getId().equals(avoidId))
                     .min(Comparator.comparingInt(a -> assignScore(a, from, loadMap)))
@@ -246,21 +281,24 @@ public class AgvEngineService {
             if (best == null) {
                 return;
             }
-            assertTransition(task, TASK_TO_PICK);
-            task.setAgvId(best.getId());
-            task.setStatus(TASK_TO_PICK);
-            task.setStartTime(LocalDateTime.now());
-            // 派单时清掉上一轮的异常说明（updateById 会跳过 null 字段，必须显式 set）
-            task.setErrorMsg(null);
-            taskService.update(null, Wrappers.<WmsAgvTask>lambdaUpdate()
+            // P1-2：只在任务仍是"待分配"时抢占成功，避免与手动派单/取消并发时重复派单
+            int claimed = taskService.getBaseMapper().update(null, Wrappers.<WmsAgvTask>lambdaUpdate()
                     .eq(WmsAgvTask::getId, task.getId())
+                    .eq(WmsAgvTask::getStatus, TASK_PENDING)
                     .set(WmsAgvTask::getAgvId, best.getId())
                     .set(WmsAgvTask::getStatus, TASK_TO_PICK)
                     .set(WmsAgvTask::getStartTime, LocalDateTime.now())
                     .set(WmsAgvTask::getErrorMsg, null));
+            if (claimed == 0) {
+                // 任务已被别的请求改掉（取消/手动流转），换下一单，别把车也标记成运行中
+                continue;
+            }
+            task.setAgvId(best.getId());
+            task.setStatus(TASK_TO_PICK);
+            task.setStartTime(LocalDateTime.now());
+            task.setErrorMsg(null);
             // 该任务已重新派发：清掉冷却与避让记录
-            recycleCooldown.remove(task.getId());
-            recycleAvoidAgv.remove(task.getId());
+            lifecycle.clearCooldown(task.getId());
             best.setStatus(AGV_RUNNING);
             deviceService.updateById(best);
             idleAgvs.remove(best);
@@ -285,6 +323,8 @@ public class AgvEngineService {
             agvById.put(d.getId(), d);
         }
         rebuildOccupancy(devices);
+        // 阶段 9：每 tick 只构建一次网格快照，寻路不再回查 deviceService.list()
+        rebuildGridView(devices);
 
         List<WmsAgvTask> running = taskService.lambdaQuery()
                 .between(WmsAgvTask::getStatus, TASK_TO_PICK, TASK_RETURNING)
@@ -310,147 +350,65 @@ public class AgvEngineService {
         detectAndBreakDeadlock(waitGraph, agvById, taskByAgv);
     }
 
-    /** 推进一步单个任务 */
-    private void advanceTask(WmsAgvTask task, WmsAgvDevice agv, Map<Long, Long> waitGraph) {
-        if (agv == null || agv.getStatus() != AGV_RUNNING) {
-            return;
+    /** 用当前车辆位置、待命位与库位坐标构建网格快照（阶段 9） */
+    private void rebuildGridView(List<WmsAgvDevice> devices) {
+        int maxX = 0;
+        int maxY = 0;
+        for (WmsAgvDevice d : devices) {
+            maxX = Math.max(maxX, Math.max(d.getPosX(), d.getHomeX()));
+            maxY = Math.max(maxY, Math.max(d.getPosY(), d.getHomeY()));
         }
-        // 在途电量兜底：跌破阈值就让任务回队列、车辆回充，禁止 0% 继续跑（阶段 3.2）
-        if (agv.getBattery() != null && agv.getBattery() <= AUTO_CHARGE_BATTERY) {
-            recycleTask(task, agv, "在途电量低于 " + AUTO_CHARGE_BATTERY
-                    + "%，任务已回收等待改派，车辆回充");
-            return;
+        for (int[] p : locationPosCache.values()) {
+            maxX = Math.max(maxX, p[0]);
+            maxY = Math.max(maxY, p[1]);
         }
-        switch (task.getStatus()) {
-            case TASK_TO_PICK -> {
-                int[] from = resolvePos(task.getFromLocationId());
-                int moved = moveToward(agv, task, from[0], from[1], waitGraph);
-                addDistance(task, moved, true);
-                if (agv.getPosX() == from[0] && agv.getPosY() == from[1]) {
-                    task.setPickTime(LocalDateTime.now());
-                    changeTaskStatus(task, TASK_PICKING, "到达取货点，开始取货");
-                    waitTicks.put(task.getId(), LOAD_UNLOAD_TICKS);
-                }
-            }
-            case TASK_PICKING -> {
-                if (countDown(task.getId())) {
-                    task.setPickDoneTime(LocalDateTime.now());
-                    changeTaskStatus(task, TASK_TO_DROP, "取货完成，前往卸货点");
-                }
-            }
-            case TASK_TO_DROP -> {
-                int[] to = resolvePos(task.getToLocationId());
-                int moved = moveToward(agv, task, to[0], to[1], waitGraph);
-                addDistance(task, moved, false);
-                if (agv.getPosX() == to[0] && agv.getPosY() == to[1]) {
-                    task.setDropTime(LocalDateTime.now());
-                    changeTaskStatus(task, TASK_DROPPING, "到达卸货点，开始卸货");
-                    waitTicks.put(task.getId(), LOAD_UNLOAD_TICKS);
-                }
-            }
-            case TASK_DROPPING -> {
-                if (countDown(task.getId())) {
-                    task.setDropDoneTime(LocalDateTime.now());
-                    changeTaskStatus(task, TASK_RETURNING, "卸货完成，返回待命区");
-                }
-            }
-            case TASK_RETURNING -> {
-                int moved = moveToward(agv, task, agv.getHomeX(), agv.getHomeY(), waitGraph);
-                addDistance(task, moved, false);
-                if (agv.getPosX() == agv.getHomeX() && agv.getPosY() == agv.getHomeY()) {
-                    task.setFinishTime(LocalDateTime.now());
-                    changeTaskStatus(task, TASK_DONE, "执行完成，" + agv.getAgvCode() + " 回到待命区");
-                    clearPath(agv.getId());
-                    agv.setStatus(AGV_IDLE);
-                    deviceService.updateById(agv);
-                    clearWaiting(agv.getId());
-                    pushAgv(agv);
-                }
-            }
-            default -> {
-            }
-        }
+        gridView = AgvGridView.of(maxX, maxY,
+                new HashSet<>(cellOwner.keySet()), new HashSet<>(blockedCells.keySet()));
     }
 
-    /**
-     * 累加任务里程（阶段 5.2）。
-     *
-     * <p>空驶段 = 前往取货的行驶格数；载货段 = 载货行驶（前往卸货 + 返回待命区）的格数。
-     * 空驶率 = 空驶里程 ÷ 总里程，用于论文第 5 章的对比实验指标。
-     */
-    private void addDistance(WmsAgvTask task, int movedCells, boolean emptyRun) {
-        if (movedCells <= 0) {
-            return;
-        }
-        int empty = task.getEmptyDistance() == null ? 0 : task.getEmptyDistance();
-        int loaded = task.getLoadedDistance() == null ? 0 : task.getLoadedDistance();
-        if (emptyRun) {
-            empty += movedCells;
-        } else {
-            loaded += movedCells;
-        }
-        task.setEmptyDistance(empty);
-        task.setLoadedDistance(loaded);
-        taskService.updateById(task);
+    /** 推进一步单个任务（状态机与回收逻辑在 AgvTaskLifecycle） */
+    private void advanceTask(WmsAgvTask task, WmsAgvDevice agv, Map<Long, Long> waitGraph) {
+        lifecycle.advanceTask(task, agv, new AgvTaskLifecycle.EngineHooks() {
+            @Override
+            public int move(WmsAgvDevice a, WmsAgvTask t, int tx, int ty) {
+                return moveToward(a, t, tx, ty, waitGraph);
+            }
+
+            @Override
+            public void clearWaiting(Long agvId) {
+                AgvEngineService.this.clearWaiting(agvId);
+            }
+
+            @Override
+            public int[] pos(Long locationId) {
+                return resolvePos(locationId);
+            }
+        });
     }
 
     /** 任务状态变更 + 转换校验 + 日志 + 推送 */
     private void changeTaskStatus(WmsAgvTask task, int newStatus, String logContent) {
-        assertTransition(task, newStatus);
-        task.setStatus(newStatus);
-        taskService.updateById(task);
-        writeLog(task.getAgvId(), task.getId(), "状态变更",
-                "任务「" + task.getTaskNo() + "」：" + logContent);
-        pushTask(task);
+        lifecycle.changeTaskStatus(task, newStatus, logContent);
     }
 
     /** 状态码中文名 */
     public static String statusName(int status) {
-        return switch (status) {
-            case TASK_PENDING -> "待分配";
-            case TASK_TO_PICK -> "前往取货";
-            case TASK_PICKING -> "取货中";
-            case TASK_TO_DROP -> "前往卸货";
-            case TASK_DROPPING -> "卸货中";
-            case TASK_RETURNING -> "返回待命区";
-            case TASK_DONE -> "已完成";
-            case TASK_CANCELED -> "已取消";
-            default -> "未知(" + status + ")";
-        };
+        return AgvTaskLifecycle.statusName(status);
     }
 
     /** 状态转换表校验：非法流转抛异常并留日志（阶段 4.5） */
     public static boolean canTransition(int from, int to) {
-        return TASK_TRANSITIONS.getOrDefault(from, Set.of()).contains(to);
+        return AgvTaskLifecycle.canTransition(from, to);
     }
 
     /** 断言流转合法，非法则记录"状态变更"日志并抛出明确的 IllegalStateException */
     private void assertTransition(WmsAgvTask task, int target) {
-        int from = task.getStatus();
-        if (!canTransition(from, target)) {
-            String msg = "非法状态流转：" + statusName(from) + "(" + from + ")"
-                    + " → " + statusName(target) + "(" + target + ")";
-            writeLog(task.getAgvId(), task.getId(), "状态变更",
-                    "任务「" + task.getTaskNo() + "」" + msg + "，已拒绝");
-            throw new IllegalStateException(msg);
-        }
+        lifecycle.assertTransition(task, target);
     }
 
     /** 8 态转换表（供接口/验收脚本读取） */
     public List<Map<String, Object>> transitionTable() {
-        List<Map<String, Object>> rows = new ArrayList<>();
-        TASK_TRANSITIONS.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(e -> {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    row.put("from", e.getKey());
-                    row.put("fromName", statusName(e.getKey()));
-                    row.put("allowed", e.getValue().stream().sorted()
-                            .map(s -> Map.of("status", s, "name", statusName(s)))
-                            .toList());
-                    rows.add(row);
-                });
-        return rows;
+        return AgvTaskLifecycle.transitionTable();
     }
 
     /** 管理员手动流转（同时作为 4.5 的校验入口：非法流转返回明确错误） */
@@ -462,26 +420,14 @@ public class AgvEngineService {
         if (target < TASK_PENDING || target > TASK_CANCELED) {
             throw new IllegalStateException("状态码超出范围（0-7）：" + target);
         }
-        if (!canTransition(task.getStatus(), target)) {
-            String msg = "非法状态流转：" + statusName(task.getStatus()) + "(" + task.getStatus()
-                    + ") → " + statusName(target) + "(" + target + ")";
-            writeLog(task.getAgvId(), task.getId(), "状态变更",
-                    "任务「" + task.getTaskNo() + "」" + msg + "，已拒绝");
-            throw new IllegalStateException(msg);
-        }
-        changeTaskStatus(task, target, "管理员手动流转至「" + statusName(target) + "」");
+        lifecycle.assertTransition(task, target);
+        lifecycle.changeTaskStatus(task, target, "管理员手动流转至「" + statusName(target) + "」");
         return task;
     }
 
     /** 装卸货倒计时，返回 true 表示倒计时结束 */
     private boolean countDown(Long taskId) {
-        int left = waitTicks.getOrDefault(taskId, 0) - 1;
-        if (left <= 0) {
-            waitTicks.remove(taskId);
-            return true;
-        }
-        waitTicks.put(taskId, left);
-        return false;
+        return lifecycle.countDown(taskId);
     }
 
     // ==================== 路径规划与多车防撞（阶段 4.1 / 4.2） ====================
@@ -564,111 +510,34 @@ public class AgvEngineService {
     }
 
     /**
-     * 取下一步：路径队列为空/阶段变化/目标变化/偏航时重算 BFS 路径。
+     * 取下一步：路径队列为空/阶段变化/目标变化/偏航时重算路径（阶段 9 交给 AgvPathPlanner）。
      */
     private int[] nextStep(WmsAgvDevice agv, WmsAgvTask task, int tx, int ty) {
         Long agvId = agv.getId();
         String targetKey = tx + "," + ty;
-        List<int[]> path = pathQueue.get(agvId);
+        List<int[]> path = pathRegistry.get(agvId);
         boolean stale = path == null || path.isEmpty()
-                || !Integer.valueOf(task.getStatus()).equals(pathPhase.get(agvId))
-                || !targetKey.equals(pathTarget.get(agvId))
-                || !isAdjacent(agv.getPosX(), agv.getPosY(), path.get(0));
+                || !Integer.valueOf(task.getStatus()).equals(pathRegistry.phase(agvId))
+                || !targetKey.equals(pathRegistry.target(agvId))
+                || !AgvPathPlanner.isAdjacent(agv.getPosX(), agv.getPosY(), path.get(0));
         if (stale) {
-            path = findPath(agv.getPosX(), agv.getPosY(), tx, ty);
+            path = AgvPathPlanner.findPath(gridView, agv.getPosX(), agv.getPosY(), tx, ty);
             if (path == null) {
-                pathQueue.remove(agvId);
+                pathRegistry.clear(agvId);
                 return null;
             }
-            pathQueue.put(agvId, path);
-            pathPhase.put(agvId, task.getStatus());
-            pathTarget.put(agvId, targetKey);
+            pathRegistry.put(agvId, path, task.getStatus(), targetKey);
         }
         return path.isEmpty() ? null : path.get(0);
     }
 
     /** 路径走完一格：移除队头（防御性判断，避免并发/重算后错位） */
     private void removePathHead(Long agvId, int[] cell) {
-        List<int[]> path = pathQueue.get(agvId);
+        List<int[]> path = pathRegistry.get(agvId);
         if (path != null && !path.isEmpty()
                 && path.get(0)[0] == cell[0] && path.get(0)[1] == cell[1]) {
             path.remove(0);
         }
-    }
-
-    /**
-     * BFS 寻路（4 邻接）。先避开阻塞格 + 动态占用；无解时忽略动态占用再试一次，
-     * 让车辆能靠近等待而不是直接判定不可达。
-     */
-    private List<int[]> findPath(int sx, int sy, int tx, int ty) {
-        List<int[]> path = bfs(sx, sy, tx, ty, true);
-        if (path == null) {
-            path = bfs(sx, sy, tx, ty, false);
-        }
-        return path;
-    }
-
-    private List<int[]> bfs(int sx, int sy, int tx, int ty, boolean avoidOccupied) {
-        if (sx == tx && sy == ty) {
-            return new ArrayList<>();
-        }
-        int maxX = Math.min(GRID_LIMIT, Math.max(Math.max(gridMaxX(), tx), sx));
-        int maxY = Math.min(GRID_LIMIT, Math.max(Math.max(gridMaxY(), ty), sy));
-        String startKey = cellKey(sx, sy);
-        String goalKey = cellKey(tx, ty);
-        Map<String, int[]> parent = new HashMap<>();
-        Set<String> seen = new HashSet<>();
-        ArrayDeque<int[]> queue = new ArrayDeque<>();
-        queue.add(new int[]{sx, sy});
-        seen.add(startKey);
-        int[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-        while (!queue.isEmpty()) {
-            int[] cur = queue.poll();
-            for (int[] d : dirs) {
-                int nx = cur[0] + d[0];
-                int ny = cur[1] + d[1];
-                if (nx < 0 || ny < 0 || nx > maxX || ny > maxY) {
-                    continue;
-                }
-                String key = cellKey(nx, ny);
-                if (seen.contains(key)) {
-                    continue;
-                }
-                // 阻塞格永远不可通行（阶段 4.4）
-                if (isBlocked(key)) {
-                    continue;
-                }
-                // 动态占用：终点格允许进入（进入前还会再校验一次），其余直接绕开
-                if (avoidOccupied && !key.equals(goalKey) && cellOwner.containsKey(key)) {
-                    continue;
-                }
-                parent.put(key, cur);
-                if (key.equals(goalKey)) {
-                    return buildPath(parent, sx, sy, tx, ty);
-                }
-                seen.add(key);
-                queue.add(new int[]{nx, ny});
-            }
-        }
-        return null;
-    }
-
-    /** 由 parent 链回溯出路径（不含起点，含终点） */
-    private List<int[]> buildPath(Map<String, int[]> parent, int sx, int sy, int tx, int ty) {
-        List<int[]> cells = new ArrayList<>();
-        int cx = tx;
-        int cy = ty;
-        while (!(cx == sx && cy == sy)) {
-            cells.add(new int[]{cx, cy});
-            int[] p = parent.get(cellKey(cx, cy));
-            if (p == null) {
-                return null;
-            }
-            cx = p[0];
-            cy = p[1];
-        }
-        java.util.Collections.reverse(cells);
-        return cells;
     }
 
     /** 每 tick 由设备表重建占用表：同格只保留一台（异常数据也不至于让地图崩） */
@@ -684,35 +553,11 @@ public class AgvEngineService {
     }
 
     private int gridMaxX() {
-        int max = 0;
-        for (int[] p : locationPosCache.values()) {
-            max = Math.max(max, p[0]);
-        }
-        for (WmsAgvDevice d : deviceService.list()) {
-            if (d.getPosX() != null) {
-                max = Math.max(max, d.getPosX());
-            }
-            if (d.getHomeX() != null) {
-                max = Math.max(max, d.getHomeX());
-            }
-        }
-        return max;
+        return gridView.maxX();
     }
 
     private int gridMaxY() {
-        int max = 0;
-        for (int[] p : locationPosCache.values()) {
-            max = Math.max(max, p[1]);
-        }
-        for (WmsAgvDevice d : deviceService.list()) {
-            if (d.getPosY() != null) {
-                max = Math.max(max, d.getPosY());
-            }
-            if (d.getHomeY() != null) {
-                max = Math.max(max, d.getHomeY());
-            }
-        }
-        return max;
+        return gridView.maxY();
     }
 
     // ==================== 等待标识（阶段 4.6） ====================
@@ -728,11 +573,7 @@ public class AgvEngineService {
         if (since == null) {
             since = now;
             writeLog(agv.getId(), task == null ? null : task.getId(), "冲突", agv.getAgvCode() + " " + reason);
-            wsHandler.broadcast("waiting", Map.of(
-                    "agvId", agv.getId(),
-                    "waiting", true,
-                    "since", now,
-                    "reason", reason));
+            publisher.pushWaiting(agv.getId(), true, now, reason);
         }
         return now - since;
     }
@@ -742,7 +583,7 @@ public class AgvEngineService {
         if (waitingSince.remove(agvId) != null) {
             waitingReason.remove(agvId);
             waitStage.remove(agvId);
-            wsHandler.broadcast("waiting", Map.of("agvId", agvId, "waiting", false));
+            publisher.pushWaiting(agvId, false, null, null);
         }
     }
 
@@ -1007,7 +848,7 @@ public class AgvEngineService {
         // 目标空位不能是请求方正在等的那一格，也不能落在请求方后面的路径上
         // （否则"推过去正好又挡上"，会变成乒乓死循环）
         Set<String> avoid = new HashSet<>();
-        List<int[]> reqPath = pathQueue.get(requesterId);
+        List<int[]> reqPath = pathRegistry.get(requesterId);
         if (reqPath != null) {
             for (int[] p : reqPath) {
                 avoid.add(cellKey(p[0], p[1]));
@@ -1194,7 +1035,7 @@ public class AgvEngineService {
                 + ") 封锁 10 秒，其他车辆将绕行或等待");
         pushAlert("warn", "格子 (" + key + ") 通道堵塞，封锁 10 秒");
         // 受影响车辆立即重规划（阶段 4.4：绕行优先，不等 10 秒）
-        for (Map.Entry<Long, List<int[]>> e : pathQueue.entrySet()) {
+        for (Map.Entry<Long, List<int[]>> e : pathRegistry.all().entrySet()) {
             boolean hit = e.getValue().stream().anyMatch(p -> p[0] == bx && p[1] == by);
             if (hit) {
                 writeLog(e.getKey(), null, "冲突",
@@ -1414,19 +1255,15 @@ public class AgvEngineService {
             deviceService.updateById(d);
             pushAgv(d);
         }
-        pathQueue.clear();
-        pathPhase.clear();
-        pathTarget.clear();
+        pathRegistry.clearAll();
         moveAcc.clear();
-        waitTicks.clear();
+        lifecycle.resetRuntimeState();
         cellOwner.clear();
         blockedCells.clear();
         waitingSince.clear();
         waitingReason.clear();
         waitingThisTick.clear();
         waitStage.clear();
-        recycleCooldown.clear();
-        recycleAvoidAgv.clear();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("clearedTasks", tasks);
         result.put("agvCount", limit);
@@ -1489,15 +1326,7 @@ public class AgvEngineService {
 
     /** 释放 AGV 回空闲 */
     private void freeAgv(Long agvId) {
-        if (agvId == null) {
-            return;
-        }
-        WmsAgvDevice agv = deviceService.getById(agvId);
-        if (agv != null && agv.getStatus() == AGV_RUNNING) {
-            agv.setStatus(AGV_IDLE);
-            deviceService.updateById(agv);
-            pushAgv(agv);
-        }
+        lifecycle.freeAgv(agvId);
     }
 
     /**
@@ -1511,39 +1340,22 @@ public class AgvEngineService {
      * 沿用上一轮的 pick/drop 时间戳会让任务时间线出现"倒序"（修 D5）。
      */
     private void recycleTask(WmsAgvTask task, WmsAgvDevice agv, String reason) {
-        recycleTask(task, agv, reason, null);
+        lifecycle.recycleTask(task, agv, reason);
+        moveAcc.remove(agv.getId());
+        clearWaiting(agv.getId());
     }
 
     /**
      * 回收任务：在途任务退回待分配队列（保留 priority，紧急任务自然插队），
      * AGV 释放为空闲（低电时下一周期由 autoChargeTick 转入充电）。
      *
-     * <p><b>修 D4</b>：回收后给任务设一段冷却，并记下"刚出过问题的那台车"，
-     * 避免同一任务在几秒内被立刻派回同一台车、再原地死锁、再回收——形成活锁。
-     *
-     * <p><b>修 D5</b>：回收时清空各阶段时间戳。任务回到队列后会重新走一遍完整流程，
-     * 沿用上一轮的 pick/drop 时间戳会让任务时间线出现"倒序"（修 D5）。
-     *
      * @param avoidAgvId 挡路的那台车（若有）。派单时优先避开它，
      *                    避免任务被重新派给同一台、又堵在同一处
      */
     private void recycleTask(WmsAgvTask task, WmsAgvDevice agv, String reason, Long avoidAgvId) {
-        assertTransition(task, TASK_PENDING);
-        persistRecycle(task, TASK_PENDING, reason);
-        waitTicks.remove(task.getId());
+        lifecycle.recycleTask(task, agv, reason, avoidAgvId);
         moveAcc.remove(agv.getId());
-        clearPath(agv.getId());
         clearWaiting(agv.getId());
-        agv.setStatus(AGV_IDLE);
-        deviceService.updateById(agv);
-        // 冷却 + 避让（修 D4：避免活锁）
-        markRecycleCooldown(task.getId(), avoidAgvId != null ? avoidAgvId : agv.getId());
-        writeLog(agv.getId(), task.getId(), "告警",
-                agv.getAgvCode() + " " + reason + "，任务「" + task.getTaskNo() + "」退回待分配（优先级 "
-                        + task.getPriority() + " 保留，"
-                        + (RECYCLE_COOLDOWN_MS / 1000) + " 秒内不再派给该车）");
-        pushTask(task);
-        pushAgv(agv);
     }
 
     // ==================== 异常模拟与自动重分配 ====================
@@ -1564,7 +1376,7 @@ public class AgvEngineService {
         for (WmsAgvTask task : tasks) {
             assertTransition(task, TASK_PENDING);
             persistRecycle(task, TASK_PENDING, "AGV 故障停机，任务已回收等待重新分配");
-            waitTicks.remove(task.getId());
+            lifecycle.clearWaitTicks(task.getId());
             markRecycleCooldown(task.getId(), agvId);
             writeLog(agvId, task.getId(), "故障",
                     agv.getAgvCode() + " 故障停机，任务「" + task.getTaskNo() + "」已回收，等待改派");
@@ -1587,7 +1399,7 @@ public class AgvEngineService {
         for (WmsAgvTask task : tasks) {
             assertTransition(task, TASK_PENDING);
             persistRecycle(task, TASK_PENDING, "AGV 电量不足（8%），任务已回收等待重新分配");
-            waitTicks.remove(task.getId());
+            lifecycle.clearWaitTicks(task.getId());
             markRecycleCooldown(task.getId(), agvId);
             writeLog(agvId, task.getId(), "告警",
                     agv.getAgvCode() + " 电量不足（8%），任务「" + task.getTaskNo() + "」已回收，等待改派");
@@ -1635,7 +1447,7 @@ public class AgvEngineService {
         for (WmsAgvTask task : tasks) {
             assertTransition(task, TASK_PENDING);
             persistRecycle(task, TASK_PENDING, "取货失败，任务退回待分配");
-            waitTicks.remove(task.getId());
+            lifecycle.clearWaitTicks(task.getId());
             markRecycleCooldown(task.getId(), agvId);
             writeLog(agvId, task.getId(), "告警",
                     agv.getAgvCode() + " 取货失败，任务「" + task.getTaskNo() + "」退回待分配");
@@ -1678,7 +1490,7 @@ public class AgvEngineService {
         snapshot.put("blocked", new ArrayList<>(blockedCells.keySet()));
         snapshot.put("occupancy", new HashMap<>(cellOwner));
         Map<String, Object> paths = new LinkedHashMap<>();
-        for (Map.Entry<Long, List<int[]>> e : pathQueue.entrySet()) {
+        for (Map.Entry<Long, List<int[]>> e : pathRegistry.all().entrySet()) {
             WmsAgvDevice agv = deviceService.getById(e.getKey());
             if (agv == null) {
                 continue;
@@ -1737,32 +1549,23 @@ public class AgvEngineService {
 
     /** 写一条 AGV 日志（供 Controller 复用，如优先级调整） */
     public void writeTaskLog(WmsAgvTask task, String logType, String content) {
-        writeLog(task.getAgvId(), task.getId(), logType, content);
-        pushTask(task);
+        lifecycle.writeTaskLog(task, logType, content);
     }
 
     private void writeLog(Long agvId, Long taskId, String logType, String content) {
-        WmsAgvLog log = new WmsAgvLog();
-        log.setAgvId(agvId);
-        log.setTaskId(taskId);
-        log.setLogType(logType);
-        log.setContent(content);
-        logService.save(log);
+        lifecycle.writeLog(agvId, taskId, logType, content);
     }
 
     private void pushAgv(WmsAgvDevice agv) {
-        wsHandler.broadcast("agv", agv);
+        publisher.pushAgv(agv);
     }
 
     private void pushTask(WmsAgvTask task) {
-        wsHandler.broadcast("task", task);
+        publisher.pushTask(task);
     }
 
     private void pushAlert(String level, String msg) {
-        wsHandler.broadcast("alert", Map.of(
-                "level", level,
-                "msg", msg,
-                "time", LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))));
+        publisher.pushAlert(level, msg);
     }
 
     // ==================== 小工具 ====================
@@ -1773,75 +1576,30 @@ public class AgvEngineService {
     }
 
     private void clearPath(Long agvId) {
-        pathQueue.remove(agvId);
-        pathPhase.remove(agvId);
-        pathTarget.remove(agvId);
+        pathRegistry.clear(agvId);
     }
 
     /** 该任务是否仍处于回收冷却期（修 D4：冷却期内不派单，杜绝活锁） */
     private boolean isInRecycleCooldown(Long taskId) {
-        Long until = recycleCooldown.get(taskId);
-        if (until == null) {
-            return false;
-        }
-        if (until <= System.currentTimeMillis()) {
-            recycleCooldown.remove(taskId);
-            recycleAvoidAgv.remove(taskId);
-            return false;
-        }
-        return true;
+        return lifecycle.isInRecycleCooldown(taskId);
     }
 
     /** 标记任务回收后的冷却与避让（修 D4） */
     private void markRecycleCooldown(Long taskId, Long agvId) {
-        recycleCooldown.put(taskId, System.currentTimeMillis() + RECYCLE_COOLDOWN_MS);
-        if (agvId != null) {
-            recycleAvoidAgv.put(taskId, agvId);
-        }
+        lifecycle.markRecycleCooldown(taskId, agvId);
     }
 
-    /**
-     * 回收任务时的落库：显式把 {@code agv_id} 与各阶段时间戳写成 NULL。
-     *
-     * <p><b>关键点</b>：MyBatis-Plus 的 {@code updateById} 默认跳过 null 字段
-     * （{@code FieldStrategy.NOT_NULL}），所以"把对象上的 agvId / 时间戳置空再 updateById"
-     * <b>写不进数据库</b>——旧值会原样留着，表现为：任务虽然回到待分配，
-     * 但仍挂着上一台车的 id；时间线也因为沿用上一轮的时间戳而出现倒序（缺陷 D5）。
-     * 这里统一用 {@code LambdaUpdateWrapper} 显式 {@code set(col, null)}。
-     *
-     * @param task     任务对象（内存字段同步置空）
-     * @param status   目标状态（通常是 TASK_PENDING）
-     * @param errorMsg 异常/回收说明
-     */
+    /** 回收任务时的落库（MyBatis-Plus 会跳过 null，必须显式 set null） */
     private void persistRecycle(WmsAgvTask task, int status, String errorMsg) {
-        task.setStatus(status);
-        task.setAgvId(null);
-        task.setErrorMsg(errorMsg);
-        task.setStartTime(null);
-        task.setPickTime(null);
-        task.setPickDoneTime(null);
-        task.setDropTime(null);
-        task.setDropDoneTime(null);
-        task.setFinishTime(null);
-        taskService.update(null, Wrappers.<WmsAgvTask>lambdaUpdate()
-                .eq(WmsAgvTask::getId, task.getId())
-                .set(WmsAgvTask::getStatus, status)
-                .set(WmsAgvTask::getAgvId, null)
-                .set(WmsAgvTask::getErrorMsg, errorMsg)
-                .set(WmsAgvTask::getStartTime, null)
-                .set(WmsAgvTask::getPickTime, null)
-                .set(WmsAgvTask::getPickDoneTime, null)
-                .set(WmsAgvTask::getDropTime, null)
-                .set(WmsAgvTask::getDropDoneTime, null)
-                .set(WmsAgvTask::getFinishTime, null));
+        lifecycle.persistRecycle(task, status, errorMsg);
     }
 
     private static String cellKey(int x, int y) {
-        return x + "," + y;
+        return AgvPathPlanner.cellKey(x, y);
     }
 
     private static boolean isAdjacent(int x1, int y1, int[] cell) {
-        return Math.abs(x1 - cell[0]) + Math.abs(y1 - cell[1]) == 1;
+        return AgvPathPlanner.isAdjacent(x1, y1, cell);
     }
 
     private int manhattan(int x1, int y1, int x2, int y2) {

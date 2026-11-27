@@ -55,6 +55,20 @@ public class AgvWebSocketHandler extends TextWebSocketHandler {
             log.warn("AGV WS 消息序列化失败，已跳过：{}", e.getMessage());
             return;
         }
+        sendRaw(json);
+    }
+
+    /**
+     * 发送一条已序列化好的消息（阶段 9：由 {@code AgvPublisher} 的发送线程调用）。
+     *
+     * <p>慢客户端、半关闭连接都可能让 {@code sendMessage} 抛 {@link IOException} 或
+     * {@link IllegalStateException}（"session has been closed"）；这里统一 catch 并摘除会话，
+     * 保证单条发送失败不会把异常冒到调度线程里。
+     */
+    public void sendRaw(String json) {
+        if (sessions.isEmpty()) {
+            return;
+        }
         TextMessage message = new TextMessage(json);
         for (WebSocketSession session : sessions) {
             if (!session.isOpen()) {
@@ -65,7 +79,8 @@ public class AgvWebSocketHandler extends TextWebSocketHandler {
                 synchronized (session) {
                     session.sendMessage(message);
                 }
-            } catch (IOException e) {
+            } catch (Exception e) {
+                // IOException / IllegalStateException 都可能是"连接已断"，直接摘除
                 sessions.remove(session);
             }
         }
