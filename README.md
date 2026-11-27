@@ -85,7 +85,7 @@ WMS/
 
 ### 1. 初始化数据库
 
-用 MySQL 客户端执行 `sql/wms.sql`，自动创建 `wms` 库、25 张表和演示数据（含双通道仓库布局、8 台 AGV 与六个角色的菜单授权矩阵）。
+用 MySQL 客户端执行 `sql/wms.sql`，自动创建 `wms` 库、25 张表和演示数据（含双通道仓库布局、26 个库位、8 台启用 AGV 与六个角色的菜单授权矩阵）。
 
 ```bash
 mysql -uroot -p --default-character-set=utf8mb4 < sql/wms.sql

@@ -72,11 +72,12 @@ def put(path, body=None):
 
 
 def sql(stmt):
-    """只用于补基础资料（物料/供应商/客户的 INSERT 太啰嗦，走接口反而更绕）"""
+    """执行一条 SQL 并返回标准输出（用于补基础资料与查数量）"""
     import subprocess
     args = [r"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe",
             "-uroot", "-p123456", "--default-character-set=utf8mb4", "wms", "-e", stmt]
-    subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    out = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return out.stdout or ""
 
 
 def reset_locations():
@@ -87,6 +88,23 @@ def reset_locations():
     """
     print("→ 清空库位占用标记")
     sql("UPDATE wms_location SET status = 0 WHERE (goods_type IS NULL OR goods_type <> 'AGV虚拟月台');")
+
+
+def trim_fleet(keep=8):
+    """把车队收敛到演示基线：只启用前 keep 台，其余设备停用。
+
+    设备总数可以到 24 台（压测用），但 8×8 的网格上放 24 台车会让地图挤成一团，
+    答辩演示以 8 台为基线——24 台只剩前 8 台参与调度，其余在设备档案里仍可见可查。
+    """
+    total = sql("SELECT COUNT(*) FROM wms_agv_device").strip().splitlines()[-1]
+    if int(total) <= keep:
+        print("→ 车队 %s 台，无需收敛" % total)
+        return
+    sql("UPDATE wms_agv_device SET enabled = 0 WHERE id NOT IN "
+        "(SELECT id FROM (SELECT id FROM wms_agv_device ORDER BY id LIMIT %d) t);" % keep)
+    sql("UPDATE wms_agv_device SET enabled = 1 WHERE id IN "
+        "(SELECT id FROM (SELECT id FROM wms_agv_device ORDER BY id LIMIT %d) t);" % keep)
+    print("→ 车队收敛到演示基线：启用前 %d 台（共 %s 台，其余停用）" % (keep, total))
 
 
 def seed_materials():
@@ -281,6 +299,7 @@ def main():
         return 1
     seed_materials()
     reset_locations()
+    trim_fleet(8)
     seed_inbound()
     seed_outbound()
     seed_move()
