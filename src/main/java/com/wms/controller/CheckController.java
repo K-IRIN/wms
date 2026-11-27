@@ -1,6 +1,7 @@
 package com.wms.controller;
 
 import com.wms.annotation.OperationLog;
+import com.wms.annotation.RequireRole;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -75,6 +76,7 @@ public class CheckController {
 
     @Operation(summary = "创建盘点单（快照账面库存）")
     @OperationLog("创建盘点单（快照账面库存）")
+    @RequireRole({"ADMIN", "MANAGER", "OPERATOR"})
     @PostMapping("/create")
     public Result<String> create(@Validated @RequestBody CheckCreateDTO dto) {
         return Result.ok(checkService.createOrder(dto));
@@ -82,6 +84,7 @@ public class CheckController {
 
     @Operation(summary = "实盘录入")
     @OperationLog("实盘录入")
+    @RequireRole({"ADMIN", "MANAGER", "OPERATOR"})
     @PutMapping("/entry")
     public Result<Void> entry(@Validated @RequestBody CheckEntryDTO dto) {
         checkService.entry(dto);
@@ -90,6 +93,7 @@ public class CheckController {
 
     @Operation(summary = "提交审核")
     @OperationLog("提交审核")
+    @RequireRole({"ADMIN", "MANAGER", "OPERATOR"})
     @PutMapping("/submit/{id}")
     public Result<Void> submit(@PathVariable Long id) {
         checkService.submit(id);
@@ -98,6 +102,7 @@ public class CheckController {
 
     @Operation(summary = "盘点差异审核")
     @OperationLog("盘点差异审核")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/audit")
     public Result<Void> audit(@Validated @RequestBody AuditDTO dto) {
         checkService.audit(dto);

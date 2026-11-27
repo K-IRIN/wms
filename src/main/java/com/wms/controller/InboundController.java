@@ -1,6 +1,7 @@
 package com.wms.controller;
 
 import com.wms.annotation.OperationLog;
+import com.wms.annotation.RequireRole;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -87,6 +88,7 @@ public class InboundController {
 
     @Operation(summary = "创建入库单")
     @OperationLog("创建入库单")
+    @RequireRole({"ADMIN", "MANAGER", "OPERATOR"})
     @PostMapping("/create")
     public Result<String> create(@Validated @RequestBody InboundCreateDTO dto) {
         return Result.ok(inboundService.createOrder(dto));
@@ -94,6 +96,7 @@ public class InboundController {
 
     @Operation(summary = "修改入库单（驳回重提）")
     @OperationLog("修改入库单（驳回重提）")
+    @RequireRole({"ADMIN", "MANAGER", "OPERATOR"})
     @PutMapping("/update")
     public Result<Void> update(@Validated @RequestBody InboundCreateDTO dto) {
         if (dto.getId() == null) {
@@ -105,6 +108,7 @@ public class InboundController {
 
     @Operation(summary = "质检登记")
     @OperationLog("质检登记")
+    @RequireRole({"ADMIN", "MANAGER", "OPERATOR"})
     @PutMapping("/quality")
     public Result<Void> quality(@Validated @RequestBody QualityDTO dto) {
         inboundService.quality(dto);
@@ -131,6 +135,7 @@ public class InboundController {
 
     @Operation(summary = "上架登记")
     @OperationLog("上架登记")
+    @RequireRole({"ADMIN", "MANAGER", "OPERATOR"})
     @PutMapping("/shelf")
     public Result<Void> shelf(@Validated @RequestBody ShelfDTO dto) {
         inboundService.shelf(dto);
@@ -139,6 +144,7 @@ public class InboundController {
 
     @Operation(summary = "取消上架")
     @OperationLog("取消上架")
+    @RequireRole({"ADMIN", "MANAGER", "OPERATOR"})
     @PutMapping("/cancel-shelf/{itemId}")
     public Result<Void> cancelShelf(@PathVariable Long itemId) {
         inboundService.cancelShelf(itemId);
@@ -147,6 +153,7 @@ public class InboundController {
 
     @Operation(summary = "审核入库单")
     @OperationLog("审核入库单")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/audit")
     public Result<Void> audit(@Validated @RequestBody AuditDTO dto) {
         inboundService.audit(dto);

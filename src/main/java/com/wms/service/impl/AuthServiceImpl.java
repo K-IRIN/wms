@@ -27,6 +27,7 @@ import com.wms.vo.MenuVO;
 import com.wms.vo.UserVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -51,6 +52,9 @@ public class AuthServiceImpl implements AuthService {
     private final SysMenuService menuService;
     private final SysRoleMenuService roleMenuService;
     private final JwtUtils jwtUtils;
+
+    /** 注册后默认角色：只读访客，禁止通过注册自授 OPERATOR/ADMIN */
+    private static final String DEFAULT_REGISTER_ROLE = "GUEST";
 
     /** 验证码缓存：key -> (code, 过期时间戳)，有效期 5 分钟，用后即删 */
     private static final Map<String, CaptchaEntry> CAPTCHA_CACHE = new ConcurrentHashMap<>();
@@ -140,15 +144,20 @@ public class AuthServiceImpl implements AuthService {
         user.setNickname(dto.getRealName());
         user.setPassword(BCrypt.hashpw(dto.getPassword()));
         user.setStatus(1);
-        userService.save(user);
+        try {
+            userService.save(user);
+        } catch (DuplicateKeyException e) {
+            // 并发注册同名账号：由唯一键兜底，返回业务提示而不是 500
+            throw new BizException("该账号已被注册");
+        }
 
-        // 注册成功自动分配默认角色：普通操作员
-        SysRole operator = roleService.getOne(
-                new LambdaQueryWrapper<SysRole>().eq(SysRole::getRoleCode, "OPERATOR"));
-        if (operator != null) {
+        // 注册成功只分配默认角色 GUEST（P1-7）：注册入口不得自授 OPERATOR/ADMIN
+        SysRole guest = roleService.getOne(
+                new LambdaQueryWrapper<SysRole>().eq(SysRole::getRoleCode, DEFAULT_REGISTER_ROLE));
+        if (guest != null) {
             SysUserRole ur = new SysUserRole();
             ur.setUserId(user.getId());
-            ur.setRoleId(operator.getId());
+            ur.setRoleId(guest.getId());
             userRoleService.save(ur);
         }
     }

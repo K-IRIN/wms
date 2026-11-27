@@ -2,6 +2,7 @@ package com.wms.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wms.annotation.OperationLog;
+import com.wms.annotation.RequireRole;
 import com.wms.common.Result;
 import com.wms.dto.DocCancelDTO;
 import com.wms.service.DocService;
@@ -40,6 +41,7 @@ public class DocController {
 
     @Operation(summary = "单据作废（必填原因，作废后只读）")
     @OperationLog("作废单据")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/cancel")
     public Result<Void> cancel(@Validated @RequestBody DocCancelDTO dto) {
         docService.cancel(dto);

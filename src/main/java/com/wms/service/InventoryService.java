@@ -1,6 +1,7 @@
 package com.wms.service;
 
 import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.wms.common.BizException;
 import com.wms.entity.WmsArea;
@@ -12,7 +13,9 @@ import com.wms.entity.WmsMoveOrder;
 import com.wms.entity.WmsWarehouse;
 import com.wms.utils.UserContext;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -41,6 +44,9 @@ public class InventoryService {
 
     /** 临期阈值：距到期日 <= 30 天进入预警清单 */
     public static final int EXPIRY_WARN_DAYS = 30;
+
+    /** 单号唯一键冲突时的最大重试次数 */
+    private static final int MAX_ORDER_NO_RETRY = 50;
 
     // ==================== 多维库存查询 ====================
 
@@ -167,7 +173,7 @@ public class InventoryService {
 
     // ==================== 移库 ====================
 
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public String move(Long materialId, Long fromLocationId, Long toLocationId, Integer quantity, String remark) {
         if (fromLocationId.equals(toLocationId)) {
             throw new BizException("源库位与目标库位不能相同");
@@ -221,7 +227,6 @@ public class InventoryService {
         }
         // 移库单
         WmsMoveOrder move = new WmsMoveOrder();
-        move.setOrderNo(genMoveNo());
         move.setMaterialId(materialId);
         move.setFromLocationId(fromLocationId);
         move.setToLocationId(toLocationId);
@@ -229,7 +234,7 @@ public class InventoryService {
         move.setStatus(1);
         move.setOperator(currentName());
         move.setRemark(remark);
-        moveOrderService.save(move);
+        saveWithRetry(move);
         // AGV 联动：生成移库搬运任务（源库位 → 目标库位）
         agvHookService.onMove(move.getOrderNo(), materialId, fromLocationId, toLocationId);
         // 双向流水
@@ -280,10 +285,30 @@ public class InventoryService {
         inventoryLogService.save(log);
     }
 
+    /** 并发下生成单号并落库：唯一键冲突时重取单号重试，最多 50 次（调用方已开启事务） */
+    private void saveWithRetry(WmsMoveOrder move) {
+        for (int attempt = 1; attempt <= MAX_ORDER_NO_RETRY; attempt++) {
+            move.setId(null);
+            move.setOrderNo(genMoveNo());
+            try {
+                moveOrderService.save(move);
+                return;
+            } catch (DuplicateKeyException e) {
+                // 另一事务已占用该序号：重新取号后重试
+            }
+        }
+        throw new BizException("单号生成冲突，请稍后重试");
+    }
+
+    /** 单号：YK + yyyyMMdd + 当日最大序号+1，如 YK20260720001 */
     private String genMoveNo() {
         String prefix = "YK" + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        long count = moveOrderService.lambdaQuery().likeRight(WmsMoveOrder::getOrderNo, prefix).count();
-        return prefix + String.format("%03d", count + 1);
+        List<Object> rows = moveOrderService.getBaseMapper().selectObjs(new QueryWrapper<WmsMoveOrder>()
+                .select("MAX(CAST(SUBSTRING(order_no, 11) AS UNSIGNED))")
+                .likeRight("order_no", prefix));
+        Object max = rows.isEmpty() ? null : rows.get(0);
+        int next = max == null ? 1 : ((Number) max).intValue() + 1;
+        return prefix + String.format("%03d", next);
     }
 
     // ==================== 预警 ====================

@@ -43,8 +43,8 @@ public class AuthController {
         return Result.ok(authService.login(dto, request.getRemoteAddr()));
     }
 
-    @Operation(summary = "用户注册（默认分配普通操作员角色）")
-    @OperationLog("用户注册（默认分配普通操作员角色）")
+    @Operation(summary = "用户注册（默认分配访客角色，需管理员另行授权）")
+    @OperationLog("用户注册（默认分配访客角色）")
     @PostMapping("/register")
     public Result<Void> register(@Validated @RequestBody RegisterDTO dto) {
         authService.register(dto);

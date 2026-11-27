@@ -1,6 +1,7 @@
 package com.wms.controller;
 
 import com.wms.annotation.OperationLog;
+import com.wms.annotation.RequireRole;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -84,6 +85,7 @@ public class OutboundController {
 
     @Operation(summary = "创建出库单")
     @OperationLog("创建出库单")
+    @RequireRole({"ADMIN", "MANAGER", "OPERATOR"})
     @PostMapping("/create")
     public Result<String> create(@Validated @RequestBody OutboundCreateDTO dto) {
         return Result.ok(outboundService.createOrder(dto));
@@ -91,6 +93,7 @@ public class OutboundController {
 
     @Operation(summary = "修改出库单（驳回重提）")
     @OperationLog("修改出库单（驳回重提）")
+    @RequireRole({"ADMIN", "MANAGER", "OPERATOR"})
     @PutMapping("/update")
     public Result<Void> update(@Validated @RequestBody OutboundCreateDTO dto) {
         if (dto.getId() == null) {
@@ -102,6 +105,7 @@ public class OutboundController {
 
     @Operation(summary = "审核出库单（通过后自动生成拣货任务）")
     @OperationLog("审核出库单（通过后自动生成拣货任务）")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/audit")
     public Result<Void> audit(@Validated @RequestBody AuditDTO dto) {
         outboundService.audit(dto);
@@ -110,6 +114,7 @@ public class OutboundController {
 
     @Operation(summary = "拣货登记（支持扫码核验）")
     @OperationLog("拣货登记（支持扫码核验）")
+    @RequireRole({"ADMIN", "MANAGER", "OPERATOR"})
     @PutMapping("/pick")
     public Result<Void> pick(@Validated @RequestBody PickDTO dto) {
         outboundService.pick(dto);
@@ -118,6 +123,7 @@ public class OutboundController {
 
     @Operation(summary = "出库复核（扣减库存并写流水）")
     @OperationLog("出库复核（扣减库存并写流水）")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/review/{id}")
     public Result<Void> review(@PathVariable Long id) {
         outboundService.review(id);

@@ -1,6 +1,7 @@
 package com.wms.controller;
 
 import com.wms.annotation.OperationLog;
+import com.wms.annotation.RequireRole;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wms.common.BizException;
 import com.wms.common.Result;
@@ -58,6 +59,7 @@ public class InventoryController {
 
     @Operation(summary = "移库（仓内/跨仓）")
     @OperationLog("移库（仓内/跨仓）")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PostMapping("/move")
     public Result<String> move(@RequestBody Map<String, Object> body) {
         Long materialId = Long.valueOf(body.get("materialId").toString());
@@ -87,6 +89,7 @@ public class InventoryController {
 
     @Operation(summary = "冻结库存")
     @OperationLog("冻结库存")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/freeze")
     public Result<Void> freeze(@RequestBody Map<String, Object> body) {
         Long inventoryId = Long.valueOf(body.get("inventoryId").toString());
@@ -101,6 +104,7 @@ public class InventoryController {
 
     @Operation(summary = "解冻库存")
     @OperationLog("解冻库存")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/unfreeze")
     public Result<Void> unfreeze(@RequestBody Map<String, Object> body) {
         Long inventoryId = Long.valueOf(body.get("inventoryId").toString());

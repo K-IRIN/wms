@@ -10,6 +10,14 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'env.ps1')
 
 $root = Split-Path $PSScriptRoot -Parent
+
+# ---------- 本地密钥（不入库，见 .tmp/README-secrets.md） ----------
+$secrets = Join-Path $root '.tmp\secrets.ps1'
+if (Test-Path $secrets) { . $secrets }
+if (-not $env:DB_PASSWORD -or -not $env:JWT_SECRET) {
+    throw "缺少 DB_PASSWORD / JWT_SECRET。请在 $secrets 中设置（模板见 .tmp\README-secrets.md）"
+}
+
 $logDir = Join-Path $root 'logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
 $logFile = Join-Path $logDir 'backend.out.log'

@@ -1,6 +1,7 @@
 package com.wms.controller;
 
 import com.wms.annotation.OperationLog;
+import com.wms.annotation.RequireRole;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.excel.EasyExcel;
@@ -70,6 +71,7 @@ public class BasSupplierController {
 
     @Operation(summary = "新增供应商")
     @OperationLog("新增供应商")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PostMapping("/add")
     public Result<Void> add(@RequestBody WmsSupplier supplier) {
         checkCodeUnique(supplier.getSupplierCode(), null);
@@ -83,6 +85,7 @@ public class BasSupplierController {
 
     @Operation(summary = "编辑供应商")
     @OperationLog("编辑供应商")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/update")
     public Result<Void> update(@RequestBody WmsSupplier supplier) {
         if (supplier.getId() == null) {
@@ -95,6 +98,7 @@ public class BasSupplierController {
 
     @Operation(summary = "恢复/终止合作（禁用而非删除）")
     @OperationLog("恢复/终止合作（禁用而非删除）")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/status/{id}/{status}")
     public Result<Void> status(@PathVariable Long id, @PathVariable Integer status) {
         WmsSupplier s = new WmsSupplier();
@@ -118,6 +122,7 @@ public class BasSupplierController {
 
     @Operation(summary = "导入供应商 Excel")
     @OperationLog("导入供应商 Excel")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PostMapping("/import")
     public Result<String> importExcel(@RequestParam("file") MultipartFile file) throws IOException {
         if (file == null || file.isEmpty()) {

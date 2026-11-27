@@ -15,10 +15,13 @@ import com.wms.entity.WmsInventoryLog;
 import com.wms.entity.WmsLocation;
 import com.wms.entity.WmsMaterial;
 import com.wms.entity.WmsMaterialCategory;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.wms.utils.UserContext;
 import com.wms.vo.InboundOrderVO;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -53,12 +56,14 @@ public class InboundService {
     public static final int STATUS_REJECTED = 2;
     public static final int STATUS_DONE = 3;
 
+    /** 单号唯一键冲突时的最大重试次数 */
+    private static final int MAX_ORDER_NO_RETRY = 50;
+
     // ==================== 创建/修改 ====================
 
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public String createOrder(InboundCreateDTO dto) {
         WmsInboundOrder order = new WmsInboundOrder();
-        order.setOrderNo(genOrderNo());
         order.setSupplierId(dto.getSupplierId());
         order.setWarehouseId(dto.getWarehouseId());
         order.setOrderDate(dto.getOrderDate());
@@ -67,9 +72,24 @@ public class InboundService {
         order.setInvalidFlag(0);
         order.setApplicant(currentName());
         order.setTotalAmount(calcTotal(dto.getItems()));
-        orderService.save(order);
+        saveWithRetry(order);
         saveItems(order.getId(), dto.getItems());
         return order.getOrderNo();
+    }
+
+    /** 并发下生成单号并落库：唯一键冲突时重取单号重试，最多 50 次（调用方已开启事务） */
+    private void saveWithRetry(WmsInboundOrder order) {
+        for (int attempt = 1; attempt <= MAX_ORDER_NO_RETRY; attempt++) {
+            order.setId(null);
+            order.setOrderNo(genOrderNo());
+            try {
+                orderService.save(order);
+                return;
+            } catch (DuplicateKeyException e) {
+                // 另一事务已占用该序号：重新取号后重试
+            }
+        }
+        throw new BizException("单号生成冲突，请稍后重试");
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -128,11 +148,15 @@ public class InboundService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    /** 单号：RK + yyyyMMdd + 3位当日序号，如 RK20260720001 */
+    /** 单号：RK + yyyyMMdd + 当日最大序号+1，如 RK20260720001 */
     private String genOrderNo() {
         String prefix = "RK" + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        long count = orderService.lambdaQuery().likeRight(WmsInboundOrder::getOrderNo, prefix).count();
-        return prefix + String.format("%03d", count + 1);
+        List<Object> rows = orderService.getBaseMapper().selectObjs(new QueryWrapper<WmsInboundOrder>()
+                .select("MAX(CAST(SUBSTRING(order_no, 11) AS UNSIGNED))")
+                .likeRight("order_no", prefix));
+        Object max = rows.isEmpty() ? null : rows.get(0);
+        int next = max == null ? 1 : ((Number) max).intValue() + 1;
+        return prefix + String.format("%03d", next);
     }
 
     // ==================== 详情 ====================
@@ -319,11 +343,6 @@ public class InboundService {
         }
         if (order.getStatus() != STATUS_PENDING) {
             throw new BizException("单据当前状态不可审核");
-        }
-        // 审核权限：管理员或仓管员
-        var roles = UserContext.get().roles();
-        if (roles == null || (roles.contains("ADMIN") == false && roles.contains("MANAGER") == false)) {
-            throw new BizException(403, "仅管理员或仓管员可审核单据");
         }
         List<WmsInboundItem> items = itemService.lambdaQuery()
                 .eq(WmsInboundItem::getOrderId, order.getId()).list();

@@ -1,6 +1,7 @@
 package com.wms.controller;
 
 import com.wms.annotation.OperationLog;
+import com.wms.annotation.RequireRole;
 import com.wms.common.BizException;
 import com.wms.common.Result;
 import com.wms.entity.WmsArea;
@@ -175,6 +176,7 @@ public class BasLocationController {
 
     @Operation(summary = "新增库区")
     @OperationLog("新增库区")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PostMapping("/area/add")
     public Result<Void> addArea(@RequestBody WmsArea area) {
         if (area.getWarehouseId() == null) {
@@ -197,6 +199,7 @@ public class BasLocationController {
 
     @Operation(summary = "编辑库区")
     @OperationLog("编辑库区")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/area/update")
     public Result<Void> updateArea(@RequestBody WmsArea area) {
         if (area.getId() == null) {
@@ -208,6 +211,7 @@ public class BasLocationController {
 
     @Operation(summary = "删除库区")
     @OperationLog("删除库区")
+    @RequireRole({"ADMIN", "MANAGER"})
     @DeleteMapping("/area/{id}")
     public Result<Void> deleteArea(@PathVariable Long id) {
         long count = locationService.lambdaQuery().eq(WmsLocation::getAreaId, id).count();
@@ -222,6 +226,7 @@ public class BasLocationController {
 
     @Operation(summary = "新增库位")
     @OperationLog("新增库位")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PostMapping("/add")
     public Result<Void> addLocation(@RequestBody WmsLocation location) {
         if (location.getAreaId() == null) {
@@ -245,6 +250,7 @@ public class BasLocationController {
 
     @Operation(summary = "编辑库位")
     @OperationLog("编辑库位")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/update")
     public Result<Void> updateLocation(@RequestBody WmsLocation location) {
         if (location.getId() == null) {
@@ -289,6 +295,7 @@ public class BasLocationController {
 
     @Operation(summary = "删除库位")
     @OperationLog("删除库位")
+    @RequireRole({"ADMIN", "MANAGER"})
     @DeleteMapping("/{id}")
     public Result<Void> deleteLocation(@PathVariable Long id) {
         locationService.removeById(id);

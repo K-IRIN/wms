@@ -11,7 +11,8 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://localhost:3306/wms?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
-    password: 123456
+    # 口令不落库：由环境变量 DB_PASSWORD 提供（缺失时启动失败，见 SecretGuard）
+    password: ${DB_PASSWORD:}
   servlet:
     multipart:
       max-file-size: 10MB
@@ -30,7 +31,8 @@ mybatis-plus:
 
 # JWT 配置（阶段4 登录模块使用）
 jwt:
-  secret: wms-graduation-project-secret-key-0123456789abcdefghijklmnopqrstuvwxyz
+  # 密钥不落库：由环境变量 JWT_SECRET 提供（>=32 字符，缺失时启动失败）
+  secret: ${JWT_SECRET:}
   expire: 86400000   # token 有效期：24 小时（毫秒）
 
 knife4j:

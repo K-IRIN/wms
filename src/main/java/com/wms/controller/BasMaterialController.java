@@ -1,6 +1,7 @@
 package com.wms.controller;
 
 import com.wms.annotation.OperationLog;
+import com.wms.annotation.RequireRole;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.excel.EasyExcel;
@@ -110,6 +111,7 @@ public class BasMaterialController {
 
     @Operation(summary = "新增分类")
     @OperationLog("新增分类")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PostMapping("/category/add")
     public Result<Void> addCategory(@RequestBody WmsMaterialCategory category) {
         category.setId(null);
@@ -125,6 +127,7 @@ public class BasMaterialController {
 
     @Operation(summary = "编辑分类")
     @OperationLog("编辑分类")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/category/update")
     public Result<Void> updateCategory(@RequestBody WmsMaterialCategory category) {
         if (category.getId() == null) {
@@ -136,6 +139,7 @@ public class BasMaterialController {
 
     @Operation(summary = "删除分类")
     @OperationLog("删除分类")
+    @RequireRole({"ADMIN", "MANAGER"})
     @DeleteMapping("/category/{id}")
     public Result<Void> deleteCategory(@PathVariable Long id) {
         long childCount = categoryService.lambdaQuery().eq(WmsMaterialCategory::getParentId, id).count();
@@ -230,6 +234,7 @@ public class BasMaterialController {
 
     @Operation(summary = "新增物料")
     @OperationLog("新增物料")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PostMapping("/add")
     public Result<Void> add(@RequestBody WmsMaterial material) {
         checkCodeUnique(material.getMaterialCode(), null);
@@ -243,6 +248,7 @@ public class BasMaterialController {
 
     @Operation(summary = "编辑物料")
     @OperationLog("编辑物料")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/update")
     public Result<Void> update(@RequestBody WmsMaterial material) {
         if (material.getId() == null) {
@@ -255,6 +261,7 @@ public class BasMaterialController {
 
     @Operation(summary = "删除物料")
     @OperationLog("删除物料")
+    @RequireRole({"ADMIN", "MANAGER"})
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         materialService.removeById(id);
@@ -263,6 +270,7 @@ public class BasMaterialController {
 
     @Operation(summary = "启用/停用物料")
     @OperationLog("启用/停用物料")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PutMapping("/status/{id}/{status}")
     public Result<Void> status(@PathVariable Long id, @PathVariable Integer status) {
         WmsMaterial m = new WmsMaterial();
@@ -290,6 +298,7 @@ public class BasMaterialController {
 
     @Operation(summary = "导入物料 Excel")
     @OperationLog("导入物料 Excel")
+    @RequireRole({"ADMIN", "MANAGER"})
     @PostMapping("/import")
     public Result<String> importExcel(@RequestParam("file") MultipartFile file) throws IOException {
         if (file == null || file.isEmpty()) {
