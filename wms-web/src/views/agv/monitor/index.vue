@@ -66,6 +66,54 @@
           </div>
         </div>
       </div>
+
+      <!-- 阶段 6.3：统计图表（环形图 + 折线图）+ 告警回看 -->
+      <div class="chart-row">
+        <div class="chart-box">
+          <div class="chart-title">设备状态分布</div>
+          <div ref="statusChartRef" class="chart-body"></div>
+        </div>
+        <div class="chart-box">
+          <div class="chart-title">近 14 天任务完成量</div>
+          <div ref="trendChartRef" class="chart-body"></div>
+        </div>
+      </div>
+
+      <div class="alert-panel">
+        <div class="alert-head">
+          <span class="chart-title">告警事件（可回看）</span>
+          <div class="alert-ops">
+            <el-select v-model="alertLevel" size="small" style="width: 120px" @change="loadAlerts(1)">
+              <el-option label="全部" value="all" />
+              <el-option label="告警" value="告警" />
+              <el-option label="故障" value="故障" />
+              <el-option label="冲突" value="冲突" />
+            </el-select>
+            <el-button size="small" @click="loadAlerts(1)">刷新</el-button>
+            <el-button size="small" type="primary" plain @click="exportReport">导出报表</el-button>
+          </div>
+        </div>
+        <el-table :data="alertRows" v-loading="alertLoading" size="small" border max-height="260">
+          <el-table-column label="时间" width="160">
+            <template #default="{ row }">{{ (row.createTime || '').replace('T', ' ').slice(0, 19) }}</template>
+          </el-table-column>
+          <el-table-column prop="agvCode" label="设备" width="100" align="center" />
+          <el-table-column prop="logType" label="类型" width="80" align="center">
+            <template #default="{ row }">
+              <el-tag :type="logTypeTag(row.logType)" size="small">{{ row.logType }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="content" label="内容" min-width="260" show-overflow-tooltip />
+          <el-table-column label="操作" width="90" align="center">
+            <template #default="{ row }">
+              <el-button link type="primary" size="small" @click="openLogsByCode(row)">运行日志</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-pagination style="margin-top: 10px; justify-content: flex-end" background small
+          layout="total, prev, pager, next" :total="alertTotal" v-model:current-page="alertPage"
+          :page-size="8" @current-change="loadAlerts" />
+      </div>
     </div>
 
     <!-- 运行日志抽屉 -->
@@ -95,6 +143,9 @@ import { Close, WarningFilled } from '@element-plus/icons-vue'
 import { useAgvStore } from '../../../store/agv'
 import { useUserStore } from '../../../store/user'
 import { listAgvDevice, listActiveAgvTask, injectAgvFault, repairAgvFault, pageAgvLog } from '../../../api/agv'
+import { getAgvTaskStat } from '../../../api/agv'
+import { pageAgvAlert, exportAgvReport } from '../../../api/agv'
+import * as echarts from 'echarts'
 
 const agvStore = useAgvStore()
 const userStore = useUserStore()
@@ -192,7 +243,98 @@ async function loadLogs() {
   }
 }
 
-const logTypeTag = (t) => ({ 故障: 'danger', 告警: 'warning', 充电: 'success', 状态变更: 'info' }[t] || 'info')
+const logTypeTag = (t) => ({ 故障: 'danger', 告警: 'warning', 充电: 'success', 状态变更: 'info', 冲突: 'info' }[t] || 'info')
+
+// ==================== 阶段 6.3：统计图表 + 告警回看 + 导出 ====================
+const statusChartRef = ref(null)
+const trendChartRef = ref(null)
+let statusChart = null
+let trendChart = null
+
+const alertRows = ref([])
+const alertTotal = ref(0)
+const alertPage = ref(1)
+const alertLevel = ref('all')
+const alertLoading = ref(false)
+
+/** 设备状态分布环形图 + 近 14 天任务完成量折线图 */
+async function loadCharts() {
+  const [statRes, devRes] = await Promise.all([getAgvTaskStat(), listAgvDevice()])
+  const devices = devRes.data || []
+
+  // 环形图：四态设备数量
+  const count = (s) => devices.filter(d => d.status === s).length
+  statusChart?.setOption({
+    color: ['#22b07d', '#4f8dff', '#e6a23c', '#f56c6c'],
+    tooltip: { trigger: 'item', formatter: '{b}: {c} 台（{d}%）' },
+    legend: { bottom: 0 },
+    series: [{
+      type: 'pie',
+      radius: ['46%', '68%'],
+      center: ['50%', '45%'],
+      avoidLabelOverlap: true,
+      label: { show: false },
+      data: [
+        { name: '空闲', value: count(0) },
+        { name: '运行中', value: count(1) },
+        { name: '充电中', value: count(2) },
+        { name: '故障', value: count(3) }
+      ]
+    }]
+  }, true)
+
+  // 折线图：近 14 天任务完成量
+  const d = statRes.data || {}
+  trendChart?.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 40, right: 16, top: 24, bottom: 28 },
+    xAxis: { type: 'category', data: d.labels || [], axisLabel: { color: 'rgba(219,230,255,0.65)' } },
+    yAxis: { type: 'value', minInterval: 1, axisLabel: { color: 'rgba(219,230,255,0.65)' } },
+    series: [{
+      type: 'line',
+      smooth: true,
+      name: '完成量',
+      data: d.donePerDay || [],
+      areaStyle: { opacity: 0.18 },
+      itemStyle: { color: '#4f8dff' },
+      lineStyle: { width: 2 }
+    }]
+  }, true)
+}
+
+/** 告警事件回看：告警 / 故障 / 冲突 */
+async function loadAlerts(page) {
+  if (page) alertPage.value = page
+  alertLoading.value = true
+  try {
+    const res = await pageAgvAlert({ pageNum: alertPage.value, pageSize: 8, level: alertLevel.value })
+    alertRows.value = res.data.records
+    alertTotal.value = res.data.total
+  } finally {
+    alertLoading.value = false
+  }
+}
+
+/** 导出 AGV 运行报表（设备台账 + 告警记录） */
+function exportReport() {
+  exportAgvReport()
+  ElMessage.success('报表导出中，请查看浏览器下载')
+}
+
+/** 从告警列表跳到该设备的运行日志 */
+function openLogsByCode(row) {
+  const agv = agvStore.agvList.find(a => a.agvCode === row.agvCode)
+  if (agv) {
+    openLogs(agv)
+  } else {
+    ElMessage.info('该事件来自系统级日志，可在「运行日志」抽屉中按类型查看')
+  }
+}
+
+function resizeCharts() {
+  statusChart?.resize()
+  trendChart?.resize()
+}
 
 // 初始数据：HTTP 全量拉取灌入 store，之后由 WebSocket 实时刷新
 onMounted(async () => {
@@ -204,6 +346,18 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+  // 阶段 6.3：图表 + 告警回看
+  statusChart = echarts.init(statusChartRef.value)
+  trendChart = echarts.init(trendChartRef.value)
+  await loadCharts()
+  await loadAlerts(1)
+  window.addEventListener('resize', resizeCharts)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', resizeCharts)
+  statusChart?.dispose()
+  trendChart?.dispose()
 })
 </script>
 
@@ -216,6 +370,57 @@ onMounted(async () => {
   padding: 16px 18px 18px;
   color: #dbe6ff;
   min-height: calc(100vh - 110px);
+}
+
+/* ==================== 阶段 6.3：图表与告警面板 ==================== */
+.chart-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.chart-box {
+  flex: 1 1 320px;
+  min-width: 300px;
+  background: rgba(4, 12, 30, 0.5);
+  border: 1px solid rgba(91, 140, 255, 0.14);
+  border-radius: 10px;
+  padding: 10px 12px 4px;
+}
+
+.chart-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(219, 230, 255, 0.9);
+  letter-spacing: 0.4px;
+}
+
+.chart-body {
+  height: 220px;
+  width: 100%;
+}
+
+.alert-panel {
+  margin-top: 14px;
+  background: rgba(4, 12, 30, 0.5);
+  border: 1px solid rgba(91, 140, 255, 0.14);
+  border-radius: 10px;
+  padding: 10px 12px 12px;
+}
+
+.alert-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.alert-ops {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .monitor-header {

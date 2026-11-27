@@ -12,6 +12,10 @@ export const deleteAgvDevice = (id) => request.delete(`/agv/device/${id}`)
 
 // ==================== AGV 运行日志 ====================
 export const pageAgvLog = (params) => request.get('/agv/device/log/page', { params })
+// 告警事件回看（告警/故障/冲突，阶段 6.3）
+export const pageAgvAlert = (params) => request.get('/agv/device/alerts', { params })
+// 导出 AGV 运行报表（Excel：设备台账 + 告警记录，阶段 6.3）
+export const exportAgvReport = () => request.get('/agv/device/export', { responseType: 'blob' })
 
 // ==================== AGV 搬运任务 ====================
 export const pageAgvTask = (params) => request.get('/agv/task/page', { params })

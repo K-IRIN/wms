@@ -28,7 +28,8 @@
 
       <!-- SVG 地图区 -->
       <div class="map-body" v-loading="loading">
-        <svg v-if="!loading" class="map-svg" :viewBox="`0 0 ${svgW} ${svgH}`" preserveAspectRatio="xMidYMid meet">
+        <svg v-if="!loading" class="map-svg" :viewBox="`0 0 ${svgW} ${svgH}`" preserveAspectRatio="xMidYMid meet"
+          :style="{ maxWidth: svgW + 'px' }">
           <defs>
             <!-- 背景网格点 -->
             <pattern id="gridDots" :width="cell" :height="cell" patternUnits="userSpaceOnUse">
@@ -350,7 +351,10 @@ onMounted(async () => {
 
 .map-svg {
   width: 100%;
+  /* 不放大：viewBox 已是格子自然尺寸，max-width 限制后地图按 1:1 渲染，
+     宽屏下不会被拉成两倍导致要滚动才能看全 */
   display: block;
+  margin: 0 auto;
 }
 
 .loc-label {

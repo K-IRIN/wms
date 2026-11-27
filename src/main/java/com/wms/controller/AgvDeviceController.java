@@ -1,6 +1,10 @@
 package com.wms.controller;
 
 import cn.hutool.core.util.StrUtil;
+import com.alibaba.excel.EasyExcel;
+import com.alibaba.excel.ExcelWriter;
+import com.alibaba.excel.write.metadata.WriteSheet;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wms.annotation.OperationLog;
 import com.wms.annotation.RequireRole;
@@ -12,6 +16,7 @@ import com.wms.service.WmsAgvDeviceService;
 import com.wms.service.WmsAgvLogService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,7 +28,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * AGV 设备档案管理（v2.0 WCS-AGV 扩展）
@@ -84,7 +96,98 @@ public class AgvDeviceController {
         return Result.ok(page);
     }
 
-    @Operation(summary = "新增 AGV 设备")
+    @Operation(summary = "告警事件列表（可回看，阶段 6.3）")
+    @GetMapping("/alerts")
+    public Result<Page<Map<String, Object>>> alerts(@RequestParam(defaultValue = "1") long pageNum,
+                                                    @RequestParam(defaultValue = "10") long pageSize,
+                                                    @RequestParam(required = false) String level) {
+        // 三类需要回看的事件：告警 / 故障 / 冲突
+        List<String> types = new ArrayList<>(List.of("告警", "故障", "冲突"));
+        if (StrUtil.isNotBlank(level) && !"all".equals(level)) {
+            types = types.stream().filter(t -> level.equals(t)).toList();
+        }
+        Page<WmsAgvLog> page = logService.lambdaQuery()
+                .in(WmsAgvLog::getLogType, types)
+                .orderByDesc(WmsAgvLog::getId)
+                .page(new Page<>(pageNum, pageSize));
+        // 补上设备编号，列表直接可读
+        Map<Long, String> codeMap = deviceService.list().stream()
+                .collect(Collectors.toMap(WmsAgvDevice::getId, WmsAgvDevice::getAgvCode));
+        Page<Map<String, Object>> result = new Page<>(page.getCurrent(), page.getSize(), page.getTotal());
+        result.setRecords(page.getRecords().stream().map(r -> {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", r.getId());
+            row.put("agvCode", r.getAgvId() == null ? "系统" : codeMap.getOrDefault(r.getAgvId(), "AGV#" + r.getAgvId()));
+            row.put("logType", r.getLogType());
+            row.put("content", r.getContent());
+            row.put("createTime", r.getCreateTime());
+            return row;
+        }).collect(Collectors.toList()));
+        return Result.ok(result);
+    }
+
+    @Operation(summary = "导出 AGV 运行报表（Excel：设备台账 + 告警记录，阶段 6.3）")
+    @OperationLog("导出AGV运行报表")
+    @GetMapping("/export")
+    public void export(HttpServletResponse response) throws IOException {
+        response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        response.setCharacterEncoding("utf-8");
+        String fileName = URLEncoder.encode("AGV运行报表", StandardCharsets.UTF_8).replace("+", "%20");
+        response.setHeader("Content-disposition", "attachment;filename*=utf-8''" + fileName + ".xlsx");
+
+        List<WmsAgvDevice> devices = deviceService.list(
+                Wrappers.<WmsAgvDevice>lambdaQuery().orderByAsc(WmsAgvDevice::getId));
+        List<WmsAgvLog> logs = logService.lambdaQuery()
+                .in(WmsAgvLog::getLogType, List.of("告警", "故障", "冲突"))
+                .orderByDesc(WmsAgvLog::getId)
+                .last("LIMIT 500")
+                .list();
+        Map<Long, String> codeMap = devices.stream()
+                .collect(Collectors.toMap(WmsAgvDevice::getId, WmsAgvDevice::getAgvCode));
+
+        try (ExcelWriter writer = EasyExcel.write(response.getOutputStream()).build()) {
+            // 页签1：设备台账
+            WriteSheet s0 = EasyExcel.writerSheet(0, "设备台账").head(List.of(
+                    List.of("AGV编号"), List.of("名称"), List.of("最大载重(kg)"), List.of("速度(格/秒)"),
+                    List.of("电量(%)"), List.of("运行状态"), List.of("当前坐标"), List.of("待命区"),
+                    List.of("是否启用"), List.of("备注"))).build();
+            List<List<Object>> deviceRows = new ArrayList<>();
+            for (WmsAgvDevice d : devices) {
+                deviceRows.add(List.of(
+                        d.getAgvCode(), d.getAgvName(), d.getMaxLoad(), d.getSpeed(), d.getBattery(),
+                        statusText(d.getStatus()), "(" + d.getPosX() + "," + d.getPosY() + ")",
+                        "(" + d.getHomeX() + "," + d.getHomeY() + ")",
+                        d.getEnabled() == 1 ? "启用" : "停用",
+                        d.getRemark() == null ? "" : d.getRemark()));
+            }
+            writer.write(deviceRows, s0);
+
+            // 页签2：告警记录
+            WriteSheet s1 = EasyExcel.writerSheet(1, "告警记录").head(List.of(
+                    List.of("时间"), List.of("AGV"), List.of("类型"), List.of("内容"))).build();
+            List<List<Object>> logRows = new ArrayList<>();
+            for (WmsAgvLog l : logs) {
+                logRows.add(List.of(
+                        l.getCreateTime() == null ? "" : l.getCreateTime().toString().replace("T", " "),
+                        l.getAgvId() == null ? "系统" : codeMap.getOrDefault(l.getAgvId(), "AGV#" + l.getAgvId()),
+                        l.getLogType(), l.getContent()));
+            }
+            writer.write(logRows, s1);
+        }
+    }
+
+    private String statusText(Integer status) {
+        if (status == null) {
+            return "未知";
+        }
+        return switch (status) {
+            case STATUS_IDLE -> "空闲";
+            case STATUS_RUNNING -> "运行中";
+            case STATUS_CHARGING -> "充电中";
+            case STATUS_FAULT -> "故障";
+            default -> "未知";
+        };
+    }
     @OperationLog("新增AGV设备")
     @RequireRole({"ADMIN", "MAINTENANCE"})
     @PostMapping("/add")
