@@ -210,13 +210,16 @@ def check_faults():
         add("四类异常", "%s（%s）" % (t, name), ('"%s"' % t) in fault,
             "注入入口在位" if ('"%s"' % t) in fault else "注入入口缺失")
 
-    # 实打一次故障，确认"故障"这类事件真的会落库（而不是只看代码里有没有这个分支）
+    # 实打一次故障 + 一次低电，确认这两类事件真的会落库
+    # （不能只看代码里有没有这个分支——日志表可能被别的测试清过，检查要自给自足）
     devs = get("/agv/device/list") or []
-    if devs:
-        target = devs[0]
-        A.request("PUT", "/agv/fault/inject/%s/fault" % target.get("id"))
+    idle = next((d for d in devs if d.get("status") == 0), None)
+    if idle:
+        A.request("PUT", "/agv/fault/inject/%s/fault" % idle.get("id"))
         time.sleep(1.5)
-        A.request("PUT", "/agv/fault/repair/%s" % target.get("id"))
+        A.request("PUT", "/agv/fault/repair/%s" % idle.get("id"))
+        A.request("PUT", "/agv/fault/inject/%s/lowBattery" % idle.get("id"))
+        time.sleep(1.5)
 
     rows = sql("SELECT log_type, COUNT(*) c FROM wms_agv_log GROUP BY log_type")
     types = {}
